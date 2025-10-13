@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Paleta Uppli */
+:root {
+  --uppli: #007aff;
+  --text: #1c1c1e;
+  --textsec: #6e6e73;
+  --bg: #ffffff;
+  --bgsec: #f2f2f7;
+}
+
+html, body {
+  @apply bg-white antialiased;
+  color: var(--text);
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+}
+
+@layer utilities {
+  .text-uppli { color: var(--uppli); }
+  .bg-uppli { background-color: var(--uppli); }
+  .border-uppli { border-color: var(--uppli); }
+  .text-textsec { color: var(--textsec); }
+  .bg-bgsec { background-color: var(--bgsec); }
+}
+
+@layer components {
+  /* Layout */
+  .container-page { @apply mx-auto max-w-3xl px-4 pt-4 pb-24; }
+  .navbar-bottom { @apply fixed bottom-0 left-0 right-0 border-t bg-white; }
+
+  /* Tipografia utilitária */
+  .title { @apply text-2xl font-bold mb-4; }
+  .subtitle { @apply text-lg font-semibold mb-2; }
+  .small { @apply text-sm text-textsec; }
+
+  /* Componentes */
+  .card { @apply rounded-2xl bg-white p-4 shadow-sm; }
+  .label { @apply text-sm text-textsec mb-1; }
+  .input {
+    @apply w-full rounded-xl border border-gray-200 px-4 py-2 outline-none
+           focus:ring-2 focus:ring-[var(--uppli)] focus:border-[var(--uppli)];
+  }
+  .btn { @apply inline-flex items-center justify-center rounded-xl px-4 py-2 font-medium transition shadow-sm; }
+  .btn-primary { @apply bg-uppli text-white hover:opacity-90 active:opacity-80; }
+  .btn-secondary { @apply bg-white border border-uppli text-uppli hover:bg-bgsec; }
+  .badge { @apply inline-flex items-center gap-1 rounded-full bg-bgsec px-2 py-1 text-xs; }
+}
