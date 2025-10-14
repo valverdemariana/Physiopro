@@ -36,10 +36,12 @@ function calcAge(iso?: string | null) {
   return `${age}`;
 }
 
-// **Novo**: ID curtinho para exibir no card
-function shortId(id: string) {
+/** ID curto (ajuste os números se quiser) */
+const ID_LEFT = 6;
+const ID_RIGHT = 4;
+function shortId(id?: string) {
   if (!id) return "";
-  return `${id.slice(0, 8)}…${id.slice(-6)}`; // 8 primeiros + … + 6 últimos
+  return `${id.slice(0, ID_LEFT)}…${id.slice(-ID_RIGHT)}`;
 }
 
 /** Página */
@@ -76,7 +78,6 @@ export default function PacientesPage() {
     const sess = await ensureSession();
     if (!sess) return;
 
-    // query base
     const base = supabase
       .from("pacientes")
       .select("id,nome,cpf,diagnostico,ativo,data_nascimento")
@@ -91,7 +92,6 @@ export default function PacientesPage() {
 
     const res = await query;
     if (res.error?.message?.toLowerCase().includes("column") && res.error.message.includes("data_nascimento")) {
-      // coluna não existe -> fallback sem ela
       const q2 = supabase
         .from("pacientes")
         .select("id,nome,cpf,diagnostico,ativo")
