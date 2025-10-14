@@ -7,11 +7,13 @@ import { format } from "date-fns";
 
 type Sessao = {
   id: string;
-  data: string;           // ISO
+  data: string; // ISO
   paciente_id: string | null;
   tipo?: string | null;
   status?: string | null;
 };
+
+type Paciente = { id: string; nome: string };
 
 type PacienteMap = Record<string, string>; // id -> nome
 
@@ -35,19 +37,30 @@ export default function AgendaPage() {
     const v = sp.get("view");
     const d = sp.get("date");
     if (d) {
-      // YYYY-MM-DD
       const [y, m, day] = d.split("-").map(Number);
       return new Date(y, (m || 1) - 1, day || 1);
     }
     if (v === "today") return new Date();
-    return new Date(); // fallback hoje
+    return new Date();
   }, [sp]);
 
   const [dia, setDia] = useState<Date>(initialDate);
   const [sessoes, setSessoes] = useState<Sessao[]>([]);
-  const [pacientes, setPacientes] = useState<PacienteMap>({});
+  const [pacientesMap, setPacientesMap] = useState<PacienteMap>({});
   const [erro, setErro] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // estado do modal de novo agendamento
+  const [openNew, setOpenNew] = useState(false);
+  const [listaPacientes, setListaPacientes] = useState<Paciente[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    paciente_id: "",
+    data: "", // yyyy-MM-dd
+    hora: "09:00", // HH:mm
+    tipo: "",
+    observacoes: "",
+  });
 
   const ensureSession = async () => {
     const { data } = await supabase.auth.getSession();
@@ -68,7 +81,7 @@ export default function AgendaPage() {
     const ini = startOfDay(dia);
     const fim = startOfNextDay(dia);
 
-    // busca sessões do dia
+    // sessões do dia
     const { data, error } = await supabase
       .from("sessoes")
       .select("id,data,paciente_id,tipo,status")
@@ -87,7 +100,7 @@ export default function AgendaPage() {
     const list = (data || []) as Sessao[];
     setSessoes(list);
 
-    // se quiser mostrar nome do paciente, busca nomes em lote
+    // nomes dos pacientes usados nas sessões
     const ids = Array.from(new Set(list.map(s => s.paciente_id).filter(Boolean))) as string[];
     if (ids.length) {
       const { data: pacRows, error: pErr } = await supabase
@@ -97,18 +110,84 @@ export default function AgendaPage() {
 
       if (!pErr && pacRows) {
         const map: PacienteMap = {};
-        for (const r of pacRows) map[r.id as string] = (r.nome as string) || "Paciente";
-        setPacientes(map);
+        for (const r of pacRows) map[r.id] = r.nome || "Paciente";
+        setPacientesMap(map);
       }
     } else {
-      setPacientes({});
+      setPacientesMap({});
     }
 
     setLoading(false);
   };
 
+  // abrir modal: pré-carrega pacientes ativos e seta data padrão = dia atual da tela
+  const openNewModal = async () => {
+    setErro(null);
+    const sess = await ensureSession();
+    if (!sess) return;
+
+    const { data, error } = await supabase
+      .from("pacientes")
+      .select("id,nome")
+      .eq("ativo", true)
+      .order("nome", { ascending: true });
+
+    if (!error && data) setListaPacientes(data as Paciente[]);
+    else console.error(error);
+
+    setForm((f) => ({
+      ...f,
+      data: format(dia, "yyyy-MM-dd"),
+      hora: "09:00",
+    }));
+
+    setOpenNew(true);
+  };
+
+  const salvarAgendamento = async () => {
+    setErro(null);
+    if (!form.paciente_id) {
+      setErro("Selecione um paciente.");
+      return;
+    }
+    if (!form.data || !form.hora) {
+      setErro("Informe data e hora.");
+      return;
+    }
+
+    const sess = await ensureSession();
+    if (!sess) return;
+
+    // monta Date a partir de yyyy-MM-dd + HH:mm
+    const [yy, mm, dd] = form.data.split("-").map(Number);
+    const [HH, MM] = form.hora.split(":").map(Number);
+    const quando = new Date(yy, (mm || 1) - 1, dd || 1, HH || 0, MM || 0, 0, 0);
+
+    setSaving(true);
+    const { error } = await supabase.from("sessoes").insert({
+      paciente_id: form.paciente_id,
+      data: quando.toISOString(),
+      tipo: form.tipo || null,
+      observacoes: form.observacoes || null,
+      status: "agendado",
+    });
+    setSaving(false);
+
+    if (error) {
+      console.error(error);
+      setErro(error.message);
+      return;
+    }
+
+    setOpenNew(false);
+    // se agendou para outro dia, move a agenda para aquele dia
+    const agDia = new Date(yy, (mm || 1) - 1, dd || 1);
+    setDia(agDia);
+    await load();
+  };
+
   useEffect(() => {
-    setDia(initialDate); // se URL mudar, atualiza
+    setDia(initialDate);
   }, [initialDate]);
 
   useEffect(() => {
@@ -117,17 +196,8 @@ export default function AgendaPage() {
   }, [dia]);
 
   const fmtDia = format(dia, "dd/MM/yyyy");
-
-  const goPrev = () => {
-    const n = new Date(dia);
-    n.setDate(n.getDate() - 1);
-    setDia(n);
-  };
-  const goNext = () => {
-    const n = new Date(dia);
-    n.setDate(n.getDate() + 1);
-    setDia(n);
-  };
+  const goPrev = () => { const n = new Date(dia); n.setDate(n.getDate() - 1); setDia(n); };
+  const goNext = () => { const n = new Date(dia); n.setDate(n.getDate() + 1); setDia(n); };
   const goToday = () => setDia(new Date());
 
   return (
@@ -135,6 +205,7 @@ export default function AgendaPage() {
       <div className="flex items-center justify-between">
         <h1 className="title">Agenda</h1>
         <div className="flex gap-2">
+          <button className="btn btn-primary" onClick={openNewModal}>Agendar</button>
           <button className="btn btn-secondary" onClick={goPrev}>◀ Dia anterior</button>
           <button className="btn btn-secondary" onClick={goToday}>Hoje</button>
           <button className="btn btn-secondary" onClick={goNext}>Próximo dia ▶</button>
@@ -155,7 +226,7 @@ export default function AgendaPage() {
             {sessoes.map((s) => {
               const t = new Date(s.data);
               const hora = t.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-              const nomePac = s.paciente_id ? (pacientes[s.paciente_id] || `Paciente ${s.paciente_id.slice(0, 6)}…`) : "—";
+              const nomePac = s.paciente_id ? (pacientesMap[s.paciente_id] || "Paciente") : "—";
               const status = s.status || "agendado";
               return (
                 <div key={s.id} className="flex items-center justify-between border rounded-xl px-3 py-2 bg-white shadow-soft">
@@ -166,13 +237,88 @@ export default function AgendaPage() {
                       <div className="text-xs">Status: {status}{s.tipo ? ` · ${s.tipo}` : ""}</div>
                     </div>
                   </div>
-                  {/* aqui depois dá pra colocar botões de reagendar/cancelar */}
                 </div>
               );
             })}
           </div>
         )}
       </div>
+
+      {/* Modal simples de novo agendamento */}
+      {openNew && (
+        <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50">
+          <div className="card w-full max-w-xl">
+            <div className="mb-2 font-semibold">Novo agendamento</div>
+
+            <div className="grid md:grid-cols-2 gap-3">
+              <div>
+                <div className="label">Paciente</div>
+                <select
+                  className="input"
+                  value={form.paciente_id}
+                  onChange={(e) => setForm({ ...form, paciente_id: e.target.value })}
+                >
+                  <option value="">Selecione…</option>
+                  {listaPacientes.map((p) => (
+                    <option key={p.id} value={p.id}>{p.nome}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <div className="label">Tipo</div>
+                <input
+                  className="input"
+                  placeholder="ex.: Avaliação, Reabilitação…"
+                  value={form.tipo}
+                  onChange={(e) => setForm({ ...form, tipo: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <div className="label">Data</div>
+                <input
+                  type="date"
+                  className="input"
+                  value={form.data}
+                  onChange={(e) => setForm({ ...form, data: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <div className="label">Hora</div>
+                <input
+                  type="time"
+                  className="input"
+                  value={form.hora}
+                  onChange={(e) => setForm({ ...form, hora: e.target.value })}
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <div className="label">Observações</div>
+                <textarea
+                  className="input"
+                  rows={3}
+                  value={form.observacoes}
+                  onChange={(e) => setForm({ ...form, observacoes: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {erro && <div className="small text-red-600 mt-2">{erro}</div>}
+
+            <div className="flex gap-2 mt-3">
+              <button className="btn btn-primary" onClick={salvarAgendamento} disabled={saving}>
+                {saving ? "Salvando..." : "Salvar"}
+              </button>
+              <button className="btn btn-secondary" onClick={() => setOpenNew(false)}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
