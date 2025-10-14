@@ -9,22 +9,22 @@ import { Plus, Search } from "lucide-react";
 /** Tipos */
 type Paciente = {
   id: string;
+  codigo?: number;
   nome: string;
   cpf: string;
   diagnostico?: string | null;
   ativo: boolean;
-  data_nascimento?: string | null; // se a coluna não existir, caímos no fallback
+  data_nascimento?: string | null;
 };
 
 /** Utils */
 function initials(fullName: string) {
-  const parts = fullName.trim().split(/\s+/);
-  if (!parts.length) return "P";
-  const one = parts[0]?.[0] || "";
-  const two = parts.length > 1 ? parts[parts.length - 1][0] : "";
-  return (one + two).toUpperCase();
+  const p = fullName.trim().split(/\s+/);
+  if (!p.length) return "P";
+  const a = p[0]?.[0] || "";
+  const b = p.length > 1 ? p[p.length - 1][0] : "";
+  return (a + b).toUpperCase();
 }
-
 function calcAge(iso?: string | null) {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -35,16 +35,12 @@ function calcAge(iso?: string | null) {
   if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
   return `${age}`;
 }
-
-/** ID curto (ajuste os números se quiser) */
-const ID_LEFT = 6;
-const ID_RIGHT = 4;
+const ID_LEFT = 6, ID_RIGHT = 4;
 function shortId(id?: string) {
   if (!id) return "";
   return `${id.slice(0, ID_LEFT)}…${id.slice(-ID_RIGHT)}`;
 }
 
-/** Página */
 export default function PacientesPage() {
   const sp = useSearchParams();
   const onlyActive = sp.get("onlyActive") === "1";
@@ -52,94 +48,86 @@ export default function PacientesPage() {
   const [search, setSearch] = useState("");
   const [pacientes, setPacientes] = useState<Paciente[]>([]);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({
-    nome: "",
-    cpf: "",
-    diagnostico: "",
-    data_nascimento: "",
-  });
+  const [form, setForm] = useState({ nome: "", cpf: "", diagnostico: "", data_nascimento: "" });
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
 
-  const ensureSession = async () => {
+  async function ensureSession() {
     const { data } = await supabase.auth.getSession();
     if (!data.session) {
       window.location.href = "/login";
       return null;
     }
     return data.session;
-  };
+  }
 
-  /** Carrega pacientes — tenta pegar data_nascimento; se a coluna não existir, cai no fallback */
-  const load = async () => {
+  async function load() {
     setErro(null);
     setCarregando(true);
-
     const sess = await ensureSession();
     if (!sess) return;
 
-    const base = supabase
+    // 1) tentativa completa (com codigo + data_nascimento + order por codigo)
+    let qry = supabase
       .from("pacientes")
-      .select("id,nome,cpf,diagnostico,ativo,data_nascimento")
+      .select("id,codigo,nome,cpf,diagnostico,ativo,data_nascimento")
       .ilike("nome", `%${search}%`)
+      .order("codigo", { ascending: true })
       .order("nome", { ascending: true });
 
-    let query = base;
-    if (onlyActive) query = query.eq("ativo", true);
+    if (onlyActive) qry = qry.eq("ativo", true);
 
-    let data: Paciente[] | null = null;
-    let error = null;
+    let { data, error } = await qry;
 
-    const res = await query;
-    if (res.error?.message?.toLowerCase().includes("column") && res.error.message.includes("data_nascimento")) {
-      const q2 = supabase
+    // 2) fallback seguro se a coluna não existir (erro 42703) OU se qualquer erro ocorrer
+    if (error?.code === "42703" || error) {
+      let safe = supabase
         .from("pacientes")
-        .select("id,nome,cpf,diagnostico,ativo")
+        .select("id,nome,cpf,diagnostico,ativo") // sem codigo / sem data_nascimento
         .ilike("nome", `%${search}%`)
         .order("nome", { ascending: true });
+      if (onlyActive) safe = safe.eq("ativo", true);
 
-      const res2 = onlyActive ? await q2.eq("ativo", true) : await q2;
-      data = (res2.data || []) as Paciente[];
-      error = res2.error;
-    } else {
-      data = (res.data || []) as Paciente[];
-      error = res.error;
+      const r2 = await safe;
+      if (r2.error) {
+        console.error(r2.error);
+        setErro(r2.error.message);
+        setPacientes([]);
+        setCarregando(false);
+        return;
+      }
+      setPacientes((r2.data || []) as Paciente[]);
+      setCarregando(false);
+      return;
     }
 
-    if (error) {
-      console.error(error);
-      setErro(error.message);
-      setPacientes([]);
-    } else {
-      setPacientes(data || []);
-    }
-
+    setPacientes((data || []) as Paciente[]);
     setCarregando(false);
-  };
+  }
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, onlyActive]);
 
-  const addPaciente = async () => {
+  async function addPaciente() {
     setErro(null);
     if (!form.nome || !form.cpf) {
       setErro("Nome e CPF são obrigatórios.");
       return;
     }
-
     const sess = await ensureSession();
     if (!sess) return;
 
-    const { error } = await supabase.from("pacientes").insert({
-      nome: form.nome,
-      cpf: form.cpf,
-      diagnostico: form.diagnostico || null,
-      data_nascimento: form.data_nascimento || null,
-      ativo: true,
-    });
-
+    const { error } = await supabase.from("pacientes").insert([
+      {
+        nome: form.nome,
+        cpf: form.cpf,
+        diagnostico: form.diagnostico || null,
+        data_nascimento: form.data_nascimento || null,
+        ativo: true, // 'codigo' é do trigger.
+      },
+    ]);
     if (error) {
       setErro(error.message);
       return;
@@ -147,9 +135,9 @@ export default function PacientesPage() {
     setShowForm(false);
     setForm({ nome: "", cpf: "", diagnostico: "", data_nascimento: "" });
     load();
-  };
+  }
 
-  const toggleAtivo = async (id: string, ativo: boolean) => {
+  async function toggleAtivo(id: string, ativo: boolean) {
     setErro(null);
     const sess = await ensureSession();
     if (!sess) return;
@@ -160,25 +148,17 @@ export default function PacientesPage() {
       return;
     }
     load();
-  };
+  }
 
   return (
     <div className="max-w-4xl mx-auto w-full">
-      {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h1 className="title m-0">Pacientes</h1>
-
-        <button
-          className="btn btn-primary md:hidden"
-          aria-label="Novo paciente"
-          onClick={() => setShowForm(true)}
-          title="Novo paciente"
-        >
+        <button className="btn btn-primary md:hidden" onClick={() => setShowForm(true)} title="Novo paciente">
           <Plus className="w-4 h-4" />
         </button>
       </div>
 
-      {/* Busca + botão Novo paciente */}
       <div className="flex items-center gap-2 mb-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-uppli" />
@@ -189,16 +169,13 @@ export default function PacientesPage() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-
         <button className="btn btn-primary hidden md:inline-flex" onClick={() => setShowForm(true)}>
           Novo paciente
         </button>
       </div>
 
-      {/* Grupo: Ativos */}
       <div className="text-textmain font-semibold mb-2">Ativos</div>
 
-      {/* Lista responsiva em cards */}
       <div className="space-y-2">
         {carregando ? (
           <div className="small text-textsec">Carregando...</div>
@@ -209,35 +186,25 @@ export default function PacientesPage() {
             const age = calcAge(p.data_nascimento);
             const ageLabel = age !== "—" ? `${age} anos` : "Idade não informada";
             const diagLabel = p.diagnostico?.trim() ? p.diagnostico : "Sem diagnóstico";
+            const codeOrId = p.codigo != null ? `Nº ${p.codigo}` : `ID: ${shortId(p.id)}`;
+            const title = p.codigo != null ? `Nº ${p.codigo} — UUID: ${p.id}` : p.id;
 
             return (
-              <div
-                key={p.id}
-                className="bg-white shadow-soft rounded-2xl px-4 py-3 flex items-center justify-between"
-              >
-                {/* Esquerda: avatar + infos */}
+              <div key={p.id} className="bg-white shadow-soft rounded-2xl px-4 py-3 flex items-center justify-between">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-10 h-10 rounded-full bg-uppli/10 text-uppli flex items-center justify-center font-semibold shrink-0">
                     {initials(p.nome)}
                   </div>
-
                   <div className="min-w-0">
                     <div className="font-semibold text-textmain">{p.nome}</div>
-
-                    {/* Detalhes: ID curto + idade + diagnóstico */}
-                    <div className="text-xs text-textsec whitespace-normal" title={p.id}>
-                      ID: {shortId(p.id)} • {ageLabel} • {diagLabel}
+                    <div className="text-xs text-textsec whitespace-normal" title={title}>
+                      {codeOrId} • {ageLabel} • {diagLabel}
                     </div>
                   </div>
                 </div>
 
-                {/* Ações */}
                 <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    className="badge"
-                    onClick={() => toggleAtivo(p.id, p.ativo)}
-                    title={p.ativo ? "Desativar" : "Ativar"}
-                  >
+                  <button className="badge" onClick={() => toggleAtivo(p.id, p.ativo)} title={p.ativo ? "Desativar" : "Ativar"}>
                     {p.ativo ? "Ativo" : "Inativo"}
                   </button>
                   <Link href={`/pacientes/${p.id}`} className="btn btn-secondary">
@@ -250,31 +217,19 @@ export default function PacientesPage() {
         )}
       </div>
 
-      {/* Modal: novo paciente */}
       {showForm && (
         <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50">
           <div className="card w-full max-w-xl">
             <div className="mb-2 font-semibold">Novo paciente</div>
-
             <div className="grid md:grid-cols-3 gap-3">
               <div className="md:col-span-3">
                 <div className="label">Nome completo</div>
-                <input
-                  className="input"
-                  value={form.nome}
-                  onChange={(e) => setForm({ ...form, nome: e.target.value })}
-                />
+                <input className="input" value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} />
               </div>
-
               <div>
                 <div className="label">CPF</div>
-                <input
-                  className="input"
-                  value={form.cpf}
-                  onChange={(e) => setForm({ ...form, cpf: e.target.value })}
-                />
+                <input className="input" value={form.cpf} onChange={(e) => setForm({ ...form, cpf: e.target.value })} />
               </div>
-
               <div>
                 <div className="label">Data de nascimento</div>
                 <input
@@ -284,26 +239,17 @@ export default function PacientesPage() {
                   onChange={(e) => setForm({ ...form, data_nascimento: e.target.value })}
                 />
               </div>
-
               <div className="md:col-span-1 md:col-start-3">
                 <div className="label">Diagnóstico</div>
-                <input
-                  className="input"
-                  value={form.diagnostico}
-                  onChange={(e) => setForm({ ...form, diagnostico: e.target.value })}
-                />
+                <input className="input" value={form.diagnostico} onChange={(e) => setForm({ ...form, diagnostico: e.target.value })} />
               </div>
             </div>
 
             {erro && <div className="small text-red-600 mt-2">{erro}</div>}
 
             <div className="flex gap-2 mt-3">
-              <button className="btn btn-primary" onClick={addPaciente}>
-                Salvar
-              </button>
-              <button className="btn btn-secondary" onClick={() => setShowForm(false)}>
-                Cancelar
-              </button>
+              <button className="btn btn-primary" onClick={addPaciente}>Salvar</button>
+              <button className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancelar</button>
             </div>
           </div>
         </div>
@@ -311,3 +257,4 @@ export default function PacientesPage() {
     </div>
   );
 }
+
