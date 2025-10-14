@@ -1,7 +1,5 @@
 "use client";
-export const dynamic = "force-dynamic";
-export const revalidate = false;
-export const fetchCache = "force-no-store";
+
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -25,8 +23,24 @@ export default function PacientesPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ nome: "", cpf: "", diagnostico: "" });
   const [erro, setErro] = useState<string | null>(null);
+  const [carregando, setCarregando] = useState(true);
+
+  const ensureSession = async () => {
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) {
+      window.location.href = "/login";
+      return null;
+    }
+    return data.session;
+  };
 
   const load = async () => {
+    setErro(null);
+    setCarregando(true);
+
+    const sess = await ensureSession();
+    if (!sess) return;
+
     let query = supabase
       .from("pacientes")
       .select("id,nome,cpf,diagnostico,ativo")
@@ -35,8 +49,15 @@ export default function PacientesPage() {
 
     if (onlyActive) query = query.eq("ativo", true);
 
-    const { data } = await query;
-    setPacientes(data || []);
+    const { data, error } = await query;
+    if (error) {
+      console.error(error);
+      setErro(error.message);
+      setPacientes([]);
+    } else {
+      setPacientes(data || []);
+    }
+    setCarregando(false);
   };
 
   useEffect(() => {
@@ -50,12 +71,17 @@ export default function PacientesPage() {
       setErro("Nome e CPF são obrigatórios.");
       return;
     }
+
+    const sess = await ensureSession();
+    if (!sess) return;
+
     const { error } = await supabase.from("pacientes").insert({
       nome: form.nome,
       cpf: form.cpf,
       diagnostico: form.diagnostico || null,
       ativo: true,
     });
+
     if (error) {
       setErro(error.message);
       return;
@@ -66,7 +92,20 @@ export default function PacientesPage() {
   };
 
   const toggleAtivo = async (id: string, ativo: boolean) => {
-    await supabase.from("pacientes").update({ ativo: !ativo }).eq("id", id);
+    setErro(null);
+
+    const sess = await ensureSession();
+    if (!sess) return;
+
+    const { error } = await supabase
+      .from("pacientes")
+      .update({ ativo: !ativo })
+      .eq("id", id);
+
+    if (error) {
+      setErro(error.message);
+      return;
+    }
     load();
   };
 
@@ -131,34 +170,39 @@ export default function PacientesPage() {
         </div>
       )}
 
-      <div className="space-y-2">
-        {pacientes.map((p) => (
-          <div key={p.id} className="card">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="font-semibold">{p.nome}</div>
-                <div className="small">
-                  CPF: {p.cpf} · {p.diagnostico || "Sem diagnóstico"}
+      {carregando ? (
+        <div className="small text-textsec">Carregando...</div>
+      ) : (
+        <div className="space-y-2">
+          {pacientes.map((p) => (
+            <div key={p.id} className="card">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-semibold">{p.nome}</div>
+                  <div className="small">
+                    CPF: {p.cpf} · {p.diagnostico || "Sem diagnóstico"}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="badge"
+                    onClick={() => toggleAtivo(p.id, p.ativo)}
+                  >
+                    {p.ativo ? "Ativo (desativar)" : "Inativo (ativar)"}
+                  </button>
+                  <Link href={`/pacientes/${p.id}`} className="btn btn-secondary">
+                    Abrir
+                  </Link>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  className="badge"
-                  onClick={() => toggleAtivo(p.id, p.ativo)}
-                >
-                  {p.ativo ? "Ativo (desativar)" : "Inativo (ativar)"}
-                </button>
-                <Link href={`/pacientes/${p.id}`} className="btn btn-secondary">
-                  Abrir
-                </Link>
-              </div>
             </div>
-          </div>
-        ))}
-        {pacientes.length === 0 && (
-          <div className="small">Nenhum paciente encontrado.</div>
-        )}
-      </div>
+          ))}
+          {pacientes.length === 0 && !erro && (
+            <div className="small">Nenhum paciente encontrado.</div>
+          )}
+          {erro && <div className="small text-red-600">{erro}</div>}
+        </div>
+      )}
     </div>
   );
 }
