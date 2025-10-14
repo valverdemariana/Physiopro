@@ -1,5 +1,8 @@
-
 "use client";
+export const dynamic = "force-dynamic";
+export const revalidate = false;
+export const fetchCache = "force-no-store";
+
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import Link from "next/link";
@@ -107,7 +110,9 @@ export default function PacientesPage() {
               <input
                 className="input"
                 value={form.diagnostico}
-                onChange={(e) => setForm({ ...form, diagnostico: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, diagnostico: e.target.value })
+                }
               />
             </div>
           </div>
@@ -116,7 +121,10 @@ export default function PacientesPage() {
             <button className="btn btn-primary" onClick={addPaciente}>
               Salvar
             </button>
-            <button className="btn btn-secondary" onClick={() => setShowForm(false)}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setShowForm(false)}
+            >
               Cancelar
             </button>
           </div>
@@ -129,10 +137,15 @@ export default function PacientesPage() {
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-semibold">{p.nome}</div>
-                <div className="small">CPF: {p.cpf} · {p.diagnostico || "Sem diagnóstico"}</div>
+                <div className="small">
+                  CPF: {p.cpf} · {p.diagnostico || "Sem diagnóstico"}
+                </div>
               </div>
               <div className="flex items-center gap-2">
-                <button className="badge" onClick={() => toggleAtivo(p.id, p.ativo)}>
+                <button
+                  className="badge"
+                  onClick={() => toggleAtivo(p.id, p.ativo)}
+                >
                   {p.ativo ? "Ativo (desativar)" : "Inativo (ativar)"}
                 </button>
                 <Link href={`/pacientes/${p.id}`} className="btn btn-secondary">
@@ -142,7 +155,9 @@ export default function PacientesPage() {
             </div>
           </div>
         ))}
-        {pacientes.length === 0 && <div className="small">Nenhum paciente encontrado.</div>}
+        {pacientes.length === 0 && (
+          <div className="small">Nenhum paciente encontrado.</div>
+        )}
       </div>
     </div>
   );
