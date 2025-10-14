@@ -1,136 +1,177 @@
 "use client";
-export const dynamic = "force-dynamic";
-export const revalidate = false;
-export const fetchCache = "force-no-store";
 
-
-import { useMemo, useState, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { formatBRDate } from "@/lib/utils";
-import DayAgenda from "@/components/DayAgenda";
+import { useSearchParams } from "next/navigation";
+import { format } from "date-fns";
+
+type Sessao = {
+  id: string;
+  data: string;           // ISO
+  paciente_id: string | null;
+  tipo?: string | null;
+  status?: string | null;
+};
+
+type PacienteMap = Record<string, string>; // id -> nome
+
+function startOfDay(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+function startOfNextDay(d: Date) {
+  const n = new Date(d);
+  n.setDate(n.getDate() + 1);
+  return startOfDay(n);
+}
+function toISO(z: Date) {
+  return z.toISOString();
+}
 
 export default function AgendaPage() {
   const sp = useSearchParams();
-  const view = sp.get("view");
-  const dateParam = sp.get("date");
 
-  const selectedDateISO = useMemo(() => {
-    if (dateParam) {
-      const d = new Date(dateParam);
-      d.setHours(0, 0, 0, 0);
-      return d.toISOString();
+  // define a data inicial: ?date=YYYY-MM-DD ou ?view=today
+  const initialDate = useMemo(() => {
+    const v = sp.get("view");
+    const d = sp.get("date");
+    if (d) {
+      // YYYY-MM-DD
+      const [y, m, day] = d.split("-").map(Number);
+      return new Date(y, (m || 1) - 1, day || 1);
     }
-    if (view === "today") {
-      const d = new Date();
-      d.setHours(0, 0, 0, 0);
-      return d.toISOString();
+    if (v === "today") return new Date();
+    return new Date(); // fallback hoje
+  }, [sp]);
+
+  const [dia, setDia] = useState<Date>(initialDate);
+  const [sessoes, setSessoes] = useState<Sessao[]>([]);
+  const [pacientes, setPacientes] = useState<PacienteMap>({});
+  const [erro, setErro] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const ensureSession = async () => {
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) {
+      window.location.href = "/login";
+      return null;
     }
-    return null;
-  }, [view, dateParam]);
-
-  // se grid diário, apenas mostra o DayAgenda
-  if (selectedDateISO) {
-    return (
-      <div className="space-y-3">
-        <h1 className="title">Agenda</h1>
-        <DayAgenda dateISO={selectedDateISO} />
-      </div>
-    );
-  }
-
-  // visão semanal simples (mantida do MVP) — lista próximo 7 dias
-  const [lista, setLista] = useState<any[]>([]);
-  const [form, setForm] = useState<any>({
-    data: new Date().toISOString().slice(0, 16),
-    pacienteNome: "",
-    tipo: "Consulta",
-    status: "agendado",
-    dor: 0,
-  });
+    return data.session;
+  };
 
   const load = async () => {
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
-    const amanha = new Date(hoje);
-    amanha.setDate(hoje.getDate() + 7);
-    const { data } = await supabase
+    setErro(null);
+    setLoading(true);
+
+    const sess = await ensureSession();
+    if (!sess) return;
+
+    const ini = startOfDay(dia);
+    const fim = startOfNextDay(dia);
+
+    // busca sessões do dia
+    const { data, error } = await supabase
       .from("sessoes")
-      .select("*, pacientes(nome)")
-      .gte("data", hoje.toISOString())
-      .lt("data", amanha.toISOString())
+      .select("id,data,paciente_id,tipo,status")
+      .gte("data", toISO(ini))
+      .lt("data", toISO(fim))
       .order("data", { ascending: true });
-    setLista(data || []);
+
+    if (error) {
+      console.error(error);
+      setErro(error.message);
+      setSessoes([]);
+      setLoading(false);
+      return;
+    }
+
+    const list = (data || []) as Sessao[];
+    setSessoes(list);
+
+    // se quiser mostrar nome do paciente, busca nomes em lote
+    const ids = Array.from(new Set(list.map(s => s.paciente_id).filter(Boolean))) as string[];
+    if (ids.length) {
+      const { data: pacRows, error: pErr } = await supabase
+        .from("pacientes")
+        .select("id,nome")
+        .in("id", ids);
+
+      if (!pErr && pacRows) {
+        const map: PacienteMap = {};
+        for (const r of pacRows) map[r.id as string] = (r.nome as string) || "Paciente";
+        setPacientes(map);
+      }
+    } else {
+      setPacientes({});
+    }
+
+    setLoading(false);
   };
 
   useEffect(() => {
-    load();
-  }, []);
+    setDia(initialDate); // se URL mudar, atualiza
+  }, [initialDate]);
 
-  const add = async () => {
-    let pacienteId: string | null = null;
-    if (form.pacienteNome) {
-      const { data: p } = await supabase
-        .from("pacientes")
-        .select("id")
-        .ilike("nome", form.pacienteNome)
-        .maybeSingle();
-      if (p?.id) pacienteId = p.id;
-      else {
-        const { data: novo } = await supabase
-          .from("pacientes")
-          .insert({ nome: form.pacienteNome, cpf: crypto.randomUUID().slice(0, 11), ativo: true })
-          .select()
-          .single();
-        pacienteId = novo?.id || null;
-      }
-    }
-    await supabase.from("sessoes").insert({
-      data: new Date(form.data).toISOString(),
-      paciente_id: pacienteId,
-      tipo: form.tipo,
-      status: form.status,
-      dor: Number(form.dor) || 0,
-    });
-    setForm({ ...form, pacienteNome: "" });
+  useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dia]);
+
+  const fmtDia = format(dia, "dd/MM/yyyy");
+
+  const goPrev = () => {
+    const n = new Date(dia);
+    n.setDate(n.getDate() - 1);
+    setDia(n);
   };
+  const goNext = () => {
+    const n = new Date(dia);
+    n.setDate(n.getDate() + 1);
+    setDia(n);
+  };
+  const goToday = () => setDia(new Date());
 
   return (
-    <div>
-      <h1 className="title">Agenda</h1>
-
-      <div className="card mb-3 grid md:grid-cols-4 gap-3">
-        <div>
-          <div className="label">Data/hora</div>
-          <input className="input" type="datetime-local" value={form.data} onChange={(e) => setForm({ ...form, data: e.target.value })} />
-        </div>
-        <div>
-          <div className="label">Paciente</div>
-          <input className="input" value={form.pacienteNome} onChange={(e) => setForm({ ...form, pacienteNome: e.target.value })} placeholder="Nome do paciente" />
-        </div>
-        <div>
-          <div className="label">Tipo</div>
-          <input className="input" value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })} />
-        </div>
-        <div className="flex items-end">
-          <button className="btn btn-primary w-full" onClick={add}>Agendar</button>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h1 className="title">Agenda</h1>
+        <div className="flex gap-2">
+          <button className="btn btn-secondary" onClick={goPrev}>◀ Dia anterior</button>
+          <button className="btn btn-secondary" onClick={goToday}>Hoje</button>
+          <button className="btn btn-secondary" onClick={goNext}>Próximo dia ▶</button>
         </div>
       </div>
 
-      <div className="space-y-2">
-        {lista.map((s: any) => (
-          <div key={s.id} className="card">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="font-semibold">{formatBRDate(s.data)} · {s.tipo}</div>
-                <div className="small">{s.pacientes?.nome || "Sem paciente"} · status: {s.status}</div>
-              </div>
-              <div className="badge">dor {s.dor ?? 0}</div>
-            </div>
+      <div className="card">
+        <div className="mb-2 font-semibold">Agenda do dia {fmtDia}</div>
+
+        {loading ? (
+          <div className="small text-textsec">Carregando...</div>
+        ) : erro ? (
+          <div className="small text-red-600">Erro: {erro}</div>
+        ) : sessoes.length === 0 ? (
+          <div className="small">Nenhuma consulta para este dia.</div>
+        ) : (
+          <div className="space-y-2">
+            {sessoes.map((s) => {
+              const t = new Date(s.data);
+              const hora = t.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+              const nomePac = s.paciente_id ? (pacientes[s.paciente_id] || `Paciente ${s.paciente_id.slice(0, 6)}…`) : "—";
+              const status = s.status || "agendado";
+              return (
+                <div key={s.id} className="flex items-center justify-between border rounded-xl px-3 py-2 bg-white shadow-soft">
+                  <div className="flex items-center gap-3">
+                    <div className="font-semibold min-w-[56px]">{hora}</div>
+                    <div className="text-textsec">
+                      <div className="font-medium text-textmain">{nomePac}</div>
+                      <div className="text-xs">Status: {status}{s.tipo ? ` · ${s.tipo}` : ""}</div>
+                    </div>
+                  </div>
+                  {/* aqui depois dá pra colocar botões de reagendar/cancelar */}
+                </div>
+              );
+            })}
           </div>
-        ))}
-        {lista.length === 0 && <div className="small">Sem itens nos próximos dias.</div>}
+        )}
       </div>
     </div>
   );
