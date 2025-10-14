@@ -36,6 +36,12 @@ function calcAge(iso?: string | null) {
   return `${age}`;
 }
 
+// **Novo**: ID curtinho para exibir no card
+function shortId(id: string) {
+  if (!id) return "";
+  return `${id.slice(0, 8)}…${id.slice(-6)}`; // 8 primeiros + … + 6 últimos
+}
+
 /** Página */
 export default function PacientesPage() {
   const sp = useSearchParams();
@@ -48,7 +54,7 @@ export default function PacientesPage() {
     nome: "",
     cpf: "",
     diagnostico: "",
-    data_nascimento: "", // <-- novo
+    data_nascimento: "",
   });
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -83,7 +89,6 @@ export default function PacientesPage() {
     let data: Paciente[] | null = null;
     let error = null;
 
-    // tenta com data_nascimento
     const res = await query;
     if (res.error?.message?.toLowerCase().includes("column") && res.error.message.includes("data_nascimento")) {
       // coluna não existe -> fallback sem ela
@@ -131,7 +136,7 @@ export default function PacientesPage() {
       nome: form.nome,
       cpf: form.cpf,
       diagnostico: form.diagnostico || null,
-      data_nascimento: form.data_nascimento || null, // <-- novo
+      data_nascimento: form.data_nascimento || null,
       ativo: true,
     });
 
@@ -140,7 +145,7 @@ export default function PacientesPage() {
       return;
     }
     setShowForm(false);
-    setForm({ nome: "", cpf: "", diagnostico: "", data_nascimento: "" }); // <-- reset atualizado
+    setForm({ nome: "", cpf: "", diagnostico: "", data_nascimento: "" });
     load();
   };
 
@@ -202,6 +207,9 @@ export default function PacientesPage() {
         ) : (
           pacientes.map((p) => {
             const age = calcAge(p.data_nascimento);
+            const ageLabel = age !== "—" ? `${age} anos` : "Idade não informada";
+            const diagLabel = p.diagnostico?.trim() ? p.diagnostico : "Sem diagnóstico";
+
             return (
               <div
                 key={p.id}
@@ -214,9 +222,11 @@ export default function PacientesPage() {
                   </div>
 
                   <div className="min-w-0">
-                    <div className="font-semibold text-textmain truncate">{p.nome}</div>
-                    <div className="text-xs text-textsec truncate" title={p.id}>
-                      ID: {p.id} • {age} {age !== "—" ? "anos" : ""} {p.diagnostico ? `• ${p.diagnostico}` : ""}
+                    <div className="font-semibold text-textmain">{p.nome}</div>
+
+                    {/* Detalhes: ID curto + idade + diagnóstico */}
+                    <div className="text-xs text-textsec whitespace-normal" title={p.id}>
+                      ID: {shortId(p.id)} • {ageLabel} • {diagLabel}
                     </div>
                   </div>
                 </div>
