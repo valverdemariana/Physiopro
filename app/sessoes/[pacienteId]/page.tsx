@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import {
@@ -12,135 +12,207 @@ import {
   CartesianGrid,
   ResponsiveContainer,
 } from "recharts";
+import { formatBRDate } from "@/lib/utils";
 
-/** util simples para formatar data PT-BR (data + hora) */
-function formatBRDate(value: string | Date) {
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return "--/--/----";
-  return d.toLocaleString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-/** Tipos clicáveis */
+/** Constantes UI */
 const TIPOS = ["Avaliação", "Reavaliação", "Sessão"] as const;
-/** Faixa de sessões planejadas */
 const TOTAL_PADRAO = 10;
 const NUMEROS = Array.from({ length: TOTAL_PADRAO }, (_, i) => i + 1);
 
-/** tenta extrair n/total a partir de observações/evolução (ex.: "[3/10] ...") */
-function getNTotalFromText(text?: string | null): { n: number | null; total: number | null } {
-  const str = String(text || "");
-  const m = str.match(/\[(\d+)\s*\/\s*(\d+)\]/); // [n/total]
-  if (!m) return { n: null, total: null };
-  return { n: Number(m[1]), total: Number(m[2]) };
-}
+/** Tipos */
+type Sessao = {
+  id: string;
+  paciente_id: string;
+  data: string;
+  tipo?: string | null;
+  observacoes?: string | null;
+  dor?: number | null;
+  evolucao?: string | null;
+  status?: string | null;
+};
+
+type Exercicio = {
+  id: string;
+  categoria: string;
+  nome: string;
+  nivel: string | null;
+  aparelho: string | null;
+};
+
+type SessaoExercicioRow = {
+  id: string;
+  ordem: number | null;
+  exercicios: {
+    nome: string;
+    categoria: string;
+    nivel: string | null;
+    aparelho: string | null;
+  } | null;
+};
 
 export default function SessoesPacientePage() {
   const { pacienteId } = useParams<{ pacienteId: string }>();
 
-  const [lista, setLista] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  /** formulário */
-  const [form, setForm] = useState({
-    data: new Date().toISOString().slice(0, 16), // datetime-local
+  /** Estado base */
+  const [lista, setLista] = useState<Sessao[]>([]);
+  const [form, setForm] = useState<{
+    data: string;
+    tipo: (typeof TIPOS)[number];
+    dor: number;
+    observacoes: string;
+    evolucao: string;
+    status: string;
+    numero?: number | null; // nº da sessão (1–10) – salvo como prefixo em observações
+  }>({
+    data: new Date().toISOString().slice(0, 16),
     tipo: "Sessão",
-    numero: 1,
-    totalPlanejado: TOTAL_PADRAO,
     dor: 0,
+    observacoes: "",
     evolucao: "",
     status: "concluido",
+    numero: null,
   });
 
+  /** Exercícios */
+  const [exLib, setExLib] = useState<Exercicio[]>([]);
+  const [showExModal, setShowExModal] = useState(false);
+  const [selectedExIds, setSelectedExIds] = useState<string[]>([]);
+
+  /** Expandir sessão e exibir exercícios vinculados */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [sessaoExs, setSessaoExs] = useState<Record<string, SessaoExercicioRow[]>>(
+    {}
+  );
+
+  /** Carrega sessões do paciente */
   const load = async () => {
-    setLoading(true);
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("sessoes")
       .select("*")
       .eq("paciente_id", pacienteId)
       .order("data", { ascending: true });
 
-    if (error) {
-      console.error(error);
-      setMsg(error.message);
-      setLista([]);
-    } else {
-      setLista(data || []);
-    }
-    setLoading(false);
+    setLista((data || []) as Sessao[]);
+  };
+
+  /** Carrega biblioteca de exercícios */
+  const loadExLib = async () => {
+    const { data } = await supabase
+      .from("exercicios")
+      .select("id,categoria,nome,nivel,aparelho")
+      .order("categoria", { ascending: true })
+      .order("nome", { ascending: true });
+
+    setExLib((data || []) as Exercicio[]);
   };
 
   useEffect(() => {
     load();
+    loadExLib();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pacienteId]);
 
-  /** série para o gráfico da dor */
+  /** Dados do gráfico */
   const chartData = useMemo(
     () =>
-      (lista || []).map((s: any) => ({
+      lista.map((s) => ({
         date: formatBRDate(s.data),
-        dor: Number(s.dor || 0),
+        dor: s.dor ?? 0,
       })),
     [lista]
   );
 
-  /** progresso (conta sessões com status concluído) */
-  const concluidas = useMemo(
-    () => (lista || []).filter((s: any) => (s.status || "").toLowerCase() === "concluido").length,
-    [lista]
-  );
+  /** Toggle seleção de exercício na modal */
+  const toggleEx = (id: string) => {
+    setSelectedExIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
 
+  /** Salvar sessão + anexar exercícios */
   const add = async () => {
-    setMsg(null);
+    // Prefixo com número de sessão (não quebra schema)
+    const prefix =
+      form.numero && form.numero >= 1 && form.numero <= TOTAL_PADRAO
+        ? `[${form.numero}/${TOTAL_PADRAO}] `
+        : "";
 
-    // persistimos n/total dentro do texto para não depender de colunas novas
-    const prefixo = `[${form.numero}/${form.totalPlanejado}]`;
-    const texto = `${prefixo} ${form.evolucao || ""}`.trim();
+    const { data: created, error } = await supabase
+      .from("sessoes")
+      .insert({
+        paciente_id: pacienteId,
+        data: new Date(form.data).toISOString(),
+        tipo: form.tipo,
+        observacoes: `${prefix}${form.observacoes || ""}`.trim(),
+        dor: Number(form.dor) || 0,
+        evolucao: form.evolucao || null,
+        status: form.status,
+      })
+      .select("id")
+      .single();
 
-    const payload: any = {
-      paciente_id: pacienteId,
-      data: new Date(form.data).toISOString(),
-      tipo: form.tipo,
-      dor: Number(form.dor) || 0,
-      evolucao: texto,
-      observacoes: texto,
-      status: form.status,
-    };
-
-    const { error } = await supabase.from("sessoes").insert(payload);
     if (error) {
-      setMsg(error.message);
+      console.error(error);
       return;
     }
-    setForm((old) => ({
-      ...old,
+
+    if (created && selectedExIds.length) {
+      const rows = selectedExIds.map((exId, i) => ({
+        sessao_id: created.id,
+        exercicio_id: exId,
+        ordem: i + 1,
+      }));
+      await supabase.from("sessoes_exercicios").insert(rows);
+    }
+
+    setSelectedExIds([]);
+    setShowExModal(false);
+    setForm({
+      data: new Date().toISOString().slice(0, 16),
+      tipo: "Sessão",
+      dor: 0,
+      observacoes: "",
       evolucao: "",
-      // se já chegou no total, mantém no máximo
-      numero: Math.min(old.numero + 1, old.totalPlanejado),
-    }));
+      status: "concluido",
+      numero: null,
+    });
     load();
   };
 
+  /** Expande/colapsa e busca exercícios vinculados à sessão */
+  const toggleExpand = async (sessaoId: string) => {
+    if (expandedId === sessaoId) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(sessaoId);
+
+    const { data } = await supabase
+      .from("sessoes_exercicios")
+      .select(
+        "id,ordem,exercicios:exercicio_id(nome,categoria,nivel,aparelho)"
+      )
+      .eq("sessao_id", sessaoId)
+      .order("ordem");
+
+    setSessaoExs((prev) => ({ ...prev, [sessaoId]: (data || []) as any }));
+  };
+
+  /** Agrupamento de exercícios por categoria (para a modal) */
+  const agrupado = useMemo(() => {
+    return exLib.reduce<Record<string, Exercicio[]>>((acc, ex) => {
+      (acc[ex.categoria] ||= []).push(ex);
+      return acc;
+    }, {});
+  }, [exLib]);
+
   return (
     <div>
-      {/* Header com voltar */}
-      <div className="flex items-center justify-between mb-3">
-        <h1 className="title m-0">Sessões</h1>
-        <button className="btn btn-secondary" onClick={() => history.back()}>
-          Voltar
-        </button>
-      </div>
+      <h1 className="title">Sessões</h1>
 
-      {/* Formulário  */}
-      <div className="card mb-3">
-        <div className="grid md:grid-cols-4 gap-3">
+      {/* Seletor de tipo + nº sessão + dor */}
+      <div className="card mb-3 space-y-3">
+        <div className="grid md:grid-cols-3 gap-3">
           <div>
             <div className="label">Data/hora</div>
             <input
@@ -153,60 +225,20 @@ export default function SessoesPacientePage() {
 
           <div>
             <div className="label">Tipo</div>
-            {/* botões clicáveis, mas também serve para mobile (select) */}
-            <div className="flex gap-2 mb-2">
+            <div className="flex gap-2 flex-wrap">
               {TIPOS.map((t) => (
                 <button
                   key={t}
                   type="button"
-                  className={`badge ${form.tipo === t ? "bg-uppli text-white" : ""}`}
                   onClick={() => setForm({ ...form, tipo: t })}
+                  className={`badge ${
+                    form.tipo === t ? "bg-uppli text-white" : ""
+                  }`}
                 >
                   {t}
                 </button>
               ))}
             </div>
-            <select
-              className="input"
-              value={form.tipo}
-              onChange={(e) => setForm({ ...form, tipo: e.target.value })}
-            >
-              {TIPOS.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <div className="label">Sessão nº</div>
-            <select
-              className="input"
-              value={form.numero}
-              onChange={(e) => setForm({ ...form, numero: Number(e.target.value) })}
-            >
-              {NUMEROS.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <div className="label">Total planejado</div>
-            <select
-              className="input"
-              value={form.totalPlanejado}
-              onChange={(e) => setForm({ ...form, totalPlanejado: Number(e.target.value) })}
-            >
-              {NUMEROS.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
           </div>
 
           <div>
@@ -217,43 +249,76 @@ export default function SessoesPacientePage() {
               min={0}
               max={10}
               value={form.dor}
-              onChange={(e) => setForm({ ...form, dor: Number(e.target.value) })}
+              onChange={(e) =>
+                setForm({ ...form, dor: Number(e.target.value || 0) })
+              }
             />
           </div>
+        </div>
 
+        {/* Número da sessão (1–10) + botão de exercícios */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <div className="label mb-1">Nº da sessão (1–10)</div>
+            <div className="flex gap-2 flex-wrap">
+              {NUMEROS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setForm({ ...form, numero: n })}
+                  className={`badge ${
+                    form.numero === n ? "bg-uppli text-white" : ""
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, numero: null })}
+                className={`badge ${form.numero == null ? "bg-uppli text-white" : ""}`}
+                title="Sem número"
+              >
+                sem nº
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              className="btn btn-secondary"
+              onClick={() => setShowExModal(true)}
+            >
+              Adicionar exercícios
+            </button>
+            {selectedExIds.length > 0 && (
+              <span className="badge">
+                {selectedExIds.length} selecionado(s)
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-3">
           <div className="md:col-span-3">
             <div className="label">Evolução / Anotações</div>
             <textarea
               className="input"
               rows={2}
-              placeholder="Ex.: Mobilização de ombro; ganho de ADM; exercícios domiciliares..."
               value={form.evolucao}
               onChange={(e) => setForm({ ...form, evolucao: e.target.value })}
             />
-            <div className="small text-textsec mt-1">
-              O texto será salvo como <code>[{form.numero}/{form.totalPlanejado}]</code> no início para
-              registrar o progresso.
-            </div>
-          </div>
-
-          <div className="md:col-span-4">
-            <button className="btn btn-primary" onClick={add}>
-              Registrar sessão
-            </button>
           </div>
         </div>
 
-        <div className="mt-3 text-sm text-textsec">
-          Concluídas: <span className="font-semibold">{concluidas}</span>
+        <div className="md:col-span-3">
+          <button className="btn btn-primary" onClick={add}>
+            Registrar sessão
+          </button>
         </div>
-        {msg && (
-          <div className={`mt-2 small ${msg.toLowerCase().includes("erro") ? "text-red-600" : "text-green-600"}`}>
-            {msg}
-          </div>
-        )}
       </div>
 
-      {/* Gráfico da dor */}
+      {/* Gráfico */}
       <div className="card mb-3">
         <div className="font-semibold mb-2">Evolução da dor</div>
         <div style={{ width: "100%", height: 280 }}>
@@ -269,37 +334,119 @@ export default function SessoesPacientePage() {
         </div>
       </div>
 
-      {/* Lista com histórico expansível */}
+      {/* Lista de sessões com histórico clicável */}
       <div className="space-y-2">
-        {loading && <div className="small text-textsec">Carregando...</div>}
-
-        {!loading &&
-          lista.map((s: any) => {
-            const { n, total } = getNTotalFromText(s.observacoes || s.evolucao);
-            return (
-              <details key={s.id} className="card">
-                <summary className="flex items-center justify-between cursor-pointer">
-                  <div>
-                    <div className="font-semibold">
-                      {formatBRDate(s.data)} · {s.tipo}{" "}
-                      {n && total ? (
-                        <span className="text-textsec font-normal">— sessão {n}/{total}</span>
-                      ) : null}
-                    </div>
-                    <div className="small">Dor {s.dor ?? 0}</div>
-                  </div>
-                  <div className="badge">{s.status}</div>
-                </summary>
-
-                <div className="mt-2 text-sm whitespace-pre-wrap">
-                  {s.evolucao || s.observacoes || "Sem notas."}
+        {lista.map((s) => (
+          <div key={s.id} className="card">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-semibold">
+                  {formatBRDate(s.data)} · {s.tipo}
                 </div>
-              </details>
-            );
-          })}
+                <div className="small">
+                  Dor {s.dor ?? 0} · {s.evolucao || "Sem notas"}
+                </div>
+              </div>
 
-        {!loading && lista.length === 0 && <div className="small">Nenhum registro.</div>}
+              <div className="flex items-center gap-2">
+                <button className="badge" onClick={() => toggleExpand(s.id)}>
+                  {expandedId === s.id ? "Ocultar exercícios" : "Exercícios"}
+                </button>
+                <div className="badge">{s.status}</div>
+              </div>
+            </div>
+
+            {expandedId === s.id && (
+              <div className="mt-2 border-t pt-2">
+                {(sessaoExs[s.id] || []).length === 0 ? (
+                  <div className="small text-textsec">
+                    Nenhum exercício vinculado.
+                  </div>
+                ) : (
+                  <ul className="small list-disc pl-5">
+                    {sessaoExs[s.id].map((it) => (
+                      <li key={it.id}>
+                        <span className="text-textsec mr-1">#{it.ordem}</span>
+                        {it.exercicios?.nome}{" "}
+                        <span className="text-textsec">
+                          — {it.exercicios?.categoria}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+        {lista.length === 0 && (
+          <div className="small text-textsec">Nenhum registro.</div>
+        )}
       </div>
+
+      {/* Modal de exercícios */}
+      {showExModal && (
+        <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50">
+          <div className="card w-full max-w-3xl max-h-[80vh] overflow-auto">
+            <div className="mb-2 font-semibold">Adicionar exercícios</div>
+
+            {Object.entries(agrupado).map(([cat, itens]) => (
+              <div key={cat} className="mb-3">
+                <div className="text-sm font-semibold text-textsec mb-1">
+                  {cat}
+                </div>
+                <div className="grid md:grid-cols-2 gap-2">
+                  {itens.map((ex) => {
+                    const checked = selectedExIds.includes(ex.id);
+                    return (
+                      <label
+                        key={ex.id}
+                        className={`card cursor-pointer ${
+                          checked ? "ring-1 ring-uppli" : ""
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            className="accent-uppli"
+                            checked={checked}
+                            onChange={() => toggleEx(ex.id)}
+                          />
+                          <div>
+                            <div className="font-medium">{ex.nome}</div>
+                            <div className="small text-textsec">
+                              {ex.nivel || "básico"}{" "}
+                              {ex.aparelho ? `· ${ex.aparelho}` : ""}
+                            </div>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+
+            <div className="flex gap-2 mt-3">
+              <button
+                className="btn btn-primary"
+                onClick={() => setShowExModal(false)}
+              >
+                Concluir seleção
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  setSelectedExIds([]);
+                  setShowExModal(false);
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
