@@ -18,6 +18,7 @@ export default function ExerciciosPage() {
   const [empresaId, setEmpresaId] = useState<string | null>(null);
   const [lista, setLista] = useState<Exercicio[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
+  const [seeding, setSeeding] = useState(false);
 
   const [form, setForm] = useState({
     nome: "",
@@ -109,11 +110,30 @@ export default function ExerciciosPage() {
   const globais = lista.filter((x) => x.empresa_id === null);
   const daEmpresa = lista.filter((x) => x.empresa_id !== null);
 
+  // 4) Seed do catálogo global via API
+  const seedCatalogo = async () => {
+    try {
+      setMsg(null);
+      setSeeding(true);
+      const r = await fetch("/api/exercicios/seed", { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) {
+        throw new Error(j?.message || "Falha ao popular catálogo.");
+      }
+      setMsg(j?.message || "Catálogo global populado com sucesso.");
+      await loadLista();
+    } catch (e: any) {
+      setMsg(e?.message || "Erro ao popular catálogo.");
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   return (
     <div className="max-w-3xl mx-auto">
       <h1 className="title">Exercícios</h1>
 
-      {msg && <div className="small text-red-600 mb-2">{msg}</div>}
+      {msg && <div className="small mb-2" style={{ color: msg.toLowerCase().includes("erro") ? "#dc2626" : "#1c1c1e" }}>{msg}</div>}
 
       {/* Formulário de novo exercício (privado) */}
       <div className="card mb-3 grid md:grid-cols-4 gap-3">
@@ -167,6 +187,19 @@ export default function ExerciciosPage() {
       {/* Catálogo global */}
       <div className="text-textmain font-semibold mb-2">Catálogo global</div>
       <div className="space-y-2 mb-4">
+        {globais.length === 0 && (
+          <div className="card">
+            <div className="mb-2">Nenhum exercício global disponível.</div>
+            <button
+              className="btn btn-primary"
+              onClick={seedCatalogo}
+              disabled={seeding}
+            >
+              {seeding ? "Populando..." : "Popular catálogo padrão"}
+            </button>
+          </div>
+        )}
+
         {globais.map((x) => (
           <div key={x.id} className="card">
             <div className="font-semibold">{x.nome}</div>
@@ -175,9 +208,6 @@ export default function ExerciciosPage() {
             </div>
           </div>
         ))}
-        {globais.length === 0 && (
-          <div className="small">Nenhum exercício global disponível.</div>
-        )}
       </div>
 
       {/* Exercícios da empresa */}
@@ -198,5 +228,4 @@ export default function ExerciciosPage() {
     </div>
   );
 }
-
 
