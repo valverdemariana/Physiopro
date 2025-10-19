@@ -1,4 +1,3 @@
-
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -8,16 +7,11 @@ type Exercicio = {
   nome: string;
   categoria: string;
   nivel: string;
+  empresa_id: string | null;
 };
 
-const CATEGORIAS = [
-  "Mat",           // Pilates Solo
-  "Reformer",
-  "Cadillac",
-  "Wunda Chair",
-  "Barrel",
-] as const;
-
+// Use os mesmos nomes de categoria do seed global (Solo/Reformer/...)
+const CATEGORIAS = ["Solo", "Reformer", "Cadillac", "Wunda Chair", "Barrel"] as const;
 const NIVEIS = ["basico", "intermediario", "avancado"] as const;
 
 export default function ExerciciosPage() {
@@ -27,15 +21,15 @@ export default function ExerciciosPage() {
 
   const [form, setForm] = useState({
     nome: "",
-    categoria: "Mat",
+    categoria: "Solo",     // <- casa com o seed global
     nivel: "basico",
   });
 
-  // pega empresa do usuário logado
+  // 1) Pega empresa do usuário logado
   useEffect(() => {
     (async () => {
       const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) {
+      if (!auth?.user) {
         window.location.href = "/login";
         return;
       }
@@ -46,6 +40,7 @@ export default function ExerciciosPage() {
         .maybeSingle();
 
       if (error) {
+        console.error(error);
         setMsg(error.message);
         return;
       }
@@ -53,35 +48,47 @@ export default function ExerciciosPage() {
     })();
   }, []);
 
-  // carrega exercícios da empresa
+  // 2) Carrega exercícios permitidos pelo RLS:
+  //    - catálogo global (empresa_id IS NULL)
+  //    - + os da própria empresa (empresa_id = sua empresa)
+  //    Como o RLS já filtra, podemos buscar sem where.
+  const loadLista = async () => {
+    setMsg(null);
+    const { data, error } = await supabase
+      .from("exercicios")
+      .select("id,nome,categoria,nivel,empresa_id")
+      .order("categoria", { ascending: true })
+      .order("nome", { ascending: true });
+
+    if (error) {
+      console.error("Erro ao carregar exercícios:", error);
+      setMsg(error.message);
+      setLista([]);
+      return;
+    }
+    setLista((data || []) as Exercicio[]);
+  };
+
   useEffect(() => {
-    if (!empresaId) return;
-    (async () => {
-      const { data, error } = await supabase
-        .from("exercicios")
-        .select("id,nome,categoria,nivel")
-        .eq("empresa_id", empresaId)
-        .order("categoria", { ascending: true })
-        .order("nome", { ascending: true });
+    // assim que tiver sessão (independe de empresaId) tenta carregar
+    loadLista();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empresaId]); // recarrega quando empresaId chegar (útil após login)
 
-      if (error) {
-        setMsg(error.message);
-      } else {
-        setLista((data || []) as Exercicio[]);
-      }
-    })();
-  }, [empresaId]);
-
+  // 3) Adiciona exercício (privado da empresa)
   const add = async () => {
     setMsg(null);
-    if (!empresaId) return;
+    if (!empresaId) {
+      setMsg("Não foi possível identificar a empresa do usuário.");
+      return;
+    }
     if (!form.nome.trim()) {
       setMsg("Informe o nome do exercício.");
       return;
     }
 
     const payload = {
-      empresa_id: empresaId,
+      empresa_id: empresaId,              // <- mantém privado
       nome: form.nome.trim(),
       categoria: form.categoria,
       nivel: form.nivel,
@@ -89,20 +96,18 @@ export default function ExerciciosPage() {
 
     const { error } = await supabase.from("exercicios").insert(payload);
     if (error) {
+      console.error(error);
       setMsg(error.message);
       return;
     }
 
-    // limpa e recarrega
     setForm({ ...form, nome: "" });
-    const { data } = await supabase
-      .from("exercicios")
-      .select("id,nome,categoria,nivel")
-      .eq("empresa_id", empresaId)
-      .order("categoria")
-      .order("nome");
-    setLista((data || []) as Exercicio[]);
+    loadLista();
   };
+
+  // (opcional) separar em grupos: Global vs Da Empresa
+  const globais = lista.filter((x) => x.empresa_id === null);
+  const daEmpresa = lista.filter((x) => x.empresa_id !== null);
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -110,6 +115,7 @@ export default function ExerciciosPage() {
 
       {msg && <div className="small text-red-600 mb-2">{msg}</div>}
 
+      {/* Formulário de novo exercício (privado) */}
       <div className="card mb-3 grid md:grid-cols-4 gap-3">
         <div className="md:col-span-2">
           <div className="label">Nome</div>
@@ -153,13 +159,31 @@ export default function ExerciciosPage() {
 
         <div className="md:col-span-4">
           <button className="btn btn-primary" onClick={add} disabled={!empresaId}>
-            Adicionar
+            Adicionar (privado da empresa)
           </button>
         </div>
       </div>
 
+      {/* Catálogo global */}
+      <div className="text-textmain font-semibold mb-2">Catálogo global</div>
+      <div className="space-y-2 mb-4">
+        {globais.map((x) => (
+          <div key={x.id} className="card">
+            <div className="font-semibold">{x.nome}</div>
+            <div className="small text-textsec">
+              {x.categoria} • {x.nivel} • Catálogo
+            </div>
+          </div>
+        ))}
+        {globais.length === 0 && (
+          <div className="small">Nenhum exercício global disponível.</div>
+        )}
+      </div>
+
+      {/* Exercícios da empresa */}
+      <div className="text-textmain font-semibold mb-2">Da sua empresa</div>
       <div className="space-y-2">
-        {lista.map((x) => (
+        {daEmpresa.map((x) => (
           <div key={x.id} className="card">
             <div className="font-semibold">{x.nome}</div>
             <div className="small text-textsec">
@@ -167,11 +191,12 @@ export default function ExerciciosPage() {
             </div>
           </div>
         ))}
-        {empresaId && lista.length === 0 && (
-          <div className="small">Sem exercícios cadastrados para esta empresa.</div>
+        {empresaId && daEmpresa.length === 0 && (
+          <div className="small">Sem exercícios privados cadastrados para esta empresa.</div>
         )}
       </div>
     </div>
   );
 }
+
 
