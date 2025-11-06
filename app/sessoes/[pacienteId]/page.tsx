@@ -19,7 +19,8 @@ type Sessao = {
   id: string;
   paciente_id: string;
   data: string;
-  tipo: "Avaliacao" | "Reavaliacao" | "Sessao";
+  // o BD pode retornar minúsculo; mantemos como string para ser flexível
+  tipo: string;
   numero_sessao?: number | null;
   dor?: number | null;
   evolucao?: string | null;
@@ -34,8 +35,25 @@ type Exercicio = {
   empresa_id: string | null;
 };
 
-const TIPOS: Array<Sessao["tipo"]> = ["Avaliacao", "Reavaliacao", "Sessao"];
+const TIPOS = ["Avaliacao", "Reavaliacao", "Sessao"] as const;
 const NROS = Array.from({ length: 10 }, (_, i) => i + 1);
+
+// mapeia o que a UI usa -> valor aceito no BD (ajuste aqui se seu enum tiver acento)
+const TIPO_DB: Record<(typeof TIPOS)[number], string> = {
+  Avaliacao: "avaliacao",
+  Reavaliacao: "reavaliacao",
+  Sessao: "sessao",
+};
+
+// rótulo amigável independente do valor vir minúsculo/maiúsculo
+function labelTipo(t: string) {
+  const k = (t || "").toLowerCase();
+  if (k === "sessao" || k === "sessão") return "Sessão";
+  if (k === "avaliacao" || k === "avaliação") return "Avaliação";
+  if (k === "reavaliacao" || k === "reavaliação") return "Reavaliação";
+  // fallback: mostra como veio
+  return t || "Sessão";
+}
 
 export default function SessoesPacientePage() {
   const { pacienteId } = useParams<{ pacienteId: string }>();
@@ -44,7 +62,7 @@ export default function SessoesPacientePage() {
   const [lista, setLista] = useState<Sessao[]>([]);
   const [form, setForm] = useState({
     data: new Date().toISOString().slice(0, 16),
-    tipo: "Sessao" as Sessao["tipo"],
+    tipo: "Sessao" as (typeof TIPOS)[number],
     numero_sessao: undefined as number | undefined,
     dor: 0,
     evolucao: "",
@@ -120,12 +138,13 @@ export default function SessoesPacientePage() {
 
   // ---------- carregar sessões do paciente ----------
   const loadSessoes = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("sessoes")
       .select("*")
       .eq("paciente_id", pacienteId)
       .order("data", { ascending: true });
-    setLista((data || []) as Sessao[]);
+
+    if (!error) setLista((data || []) as Sessao[]);
   };
 
   useEffect(() => {
@@ -143,12 +162,12 @@ export default function SessoesPacientePage() {
       const insertPayload: any = {
         paciente_id: String(pacienteId),
         data: new Date(form.data).toISOString(),
-        // converter para minúsculo para evitar erro de ENUM/validação no DB
-        tipo: String(form.tipo || "Sessao").toLowerCase(), // "avaliacao" | "reavaliacao" | "sessao"
+        // mapeado para o formato aceito no BD
+        tipo: TIPO_DB[form.tipo], // "avaliacao" | "reavaliacao" | "sessao"
         numero_sessao: form.numero_sessao ?? null,
-        dor: Number(form.dor) || 0,
+        dor: Number.isFinite(form.dor) ? Number(form.dor) : 0,
         evolucao: form.evolucao?.trim() || null,
-        status: form.status || "concluido",
+        // não enviamos "status" para evitar conflito de enum/check
       };
 
       const { data: inserted, error } = await supabase
@@ -162,10 +181,9 @@ export default function SessoesPacientePage() {
 
       // vincula os exercícios selecionados
       if (sessaoId && selecionados.size > 0) {
-        const payload = Array.from(selecionados).map((exId, idx) => ({
+        const payload = Array.from(selecionados).map((exId) => ({
           sessao_id: sessaoId,
           exercicio_id: exId,
-          ordem: idx + 1,
         }));
 
         const { error: e2 } = await supabase
@@ -182,6 +200,7 @@ export default function SessoesPacientePage() {
       await loadSessoes();
     } catch (e: any) {
       setErro(e?.message || "Não foi possível registrar a sessão.");
+      console.error("Erro ao registrar sessão:", e);
     } finally {
       setSaving(false);
     }
@@ -294,18 +313,25 @@ export default function SessoesPacientePage() {
           />
         </div>
 
-        <div className="flex items-end md:justify-end gap-2 md:col-span-1">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => setPickerOpen(true)}
-          >
-            Adicionar exercícios
-            {selecionados.size > 0 ? ` (${selecionados.size})` : ""}
-          </button>
-          <button className="btn btn-primary" onClick={add} disabled={saving}>
-            {saving ? "Salvando..." : "Registrar sessão"}
-          </button>
+        {/* Botões responsivos */}
+        <div className="md:col-span-1">
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-end gap-2 h-full">
+            <button
+              type="button"
+              className="btn btn-secondary w-full sm:w-auto"
+              onClick={() => setPickerOpen(true)}
+            >
+              Adicionar exercícios
+              {selecionados.size > 0 ? ` (${selecionados.size})` : ""}
+            </button>
+            <button
+              className="btn btn-primary w-full sm:w-auto"
+              onClick={add}
+              disabled={saving}
+            >
+              {saving ? "Salvando..." : "Registrar sessão"}
+            </button>
+          </div>
         </div>
 
         {erro && <div className="small text-red-600 md:col-span-4">{erro}</div>}
@@ -334,15 +360,12 @@ export default function SessoesPacientePage() {
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-semibold">
-                  {formatBRDate(s.data)} ·{" "}
-                  {s.tipo === "Sessao"
-                    ? "Sessão"
-                    : s.tipo === "Avaliacao"
-                    ? "Avaliação"
-                    : "Reavaliação"}
+                  {formatBRDate(s.data)} · {labelTipo(s.tipo)}
                   {s.numero_sessao ? ` · nº ${s.numero_sessao}` : ""}
                 </div>
-                <div className="small">Dor {s.dor ?? 0} · {s.evolucao || "Sem notas"}</div>
+                <div className="small">
+                  Dor {s.dor ?? 0} · {s.evolucao || "Sem notas"}
+                </div>
               </div>
               <button
                 className="btn btn-secondary"
@@ -424,15 +447,15 @@ export default function SessoesPacientePage() {
               )}
             </div>
 
-            <div className="flex gap-2 mt-3 justify-end">
+            <div className="flex flex-col-reverse sm:flex-row gap-2 mt-3 sm:justify-end">
               <button
-                className="btn btn-primary"
+                className="btn btn-primary w-full sm:w-auto"
                 onClick={() => setPickerOpen(false)}
               >
                 Concluir seleção
               </button>
               <button
-                className="btn btn-secondary"
+                className="btn btn-secondary w-full sm:w-auto"
                 onClick={() => setPickerOpen(false)}
               >
                 Cancelar
