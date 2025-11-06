@@ -170,27 +170,33 @@ export default function SessoesPacientePage() {
         // não enviamos "status" para evitar conflito de enum/check
       };
 
-      const { data: inserted, error } = await supabase
+      const { data: inserted, error: e1 } = await supabase
         .from("sessoes")
         .insert(insertPayload)
         .select("id")
         .single();
 
-      if (error) throw error;
+      if (e1) throw e1;
       const sessaoId = inserted?.id;
 
       // vincula os exercícios selecionados
       if (sessaoId && selecionados.size > 0) {
-        const payload = Array.from(selecionados).map((exId) => ({
+        const payload = Array.from(selecionados).map((exId, idx) => ({
           sessao_id: sessaoId,
           exercicio_id: exId,
+          ordem: idx + 1,
         }));
 
+        // INSERT simples; se já existir (unique), ignoramos o erro 23505
         const { error: e2 } = await supabase
           .from("sessoes_exercicios")
-          .upsert(payload, { onConflict: "sessao_id,exercicio_id" });
+          .insert(payload);
 
-        if (e2) throw e2;
+        const isDuplicate =
+          (e2 && (e2 as any).code === "23505") ||
+          (e2 && /duplicate key value/i.test((e2 as any).message || ""));
+
+        if (e2 && !isDuplicate) throw e2;
       }
 
       // limpa e recarrega
@@ -381,7 +387,7 @@ export default function SessoesPacientePage() {
                   const e = exMap.get(exId);
                   if (!e) return null;
                   return (
-                    <div key={exId} className="small text-textsec">
+                    <div key={e.id} className="small text-textsec">
                       • <span className="font-semibold text-textmain">{e.nome}</span>{" "}
                       — {e.categoria} · {e.nivel}
                       {e.empresa_id === null ? " · Catálogo" : ""}

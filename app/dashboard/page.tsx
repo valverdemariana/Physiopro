@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import CardStat from "@/components/CardStat";
-import { Users, CalendarDays, Moon, Sun } from "lucide-react";
+import { Users, CalendarDays } from "lucide-react";
 import WeekAgenda from "@/components/WeekAgenda";
 
 function toTitle(s?: string) {
@@ -48,14 +48,6 @@ export default function DashboardPage() {
 
   // ⬇️ usa a função que trata títulos
   const saudacao = useMemo(() => buildGreeting(nome), [nome]);
-
-  // Controles da agenda: view e tema (persistidos)
-  const [agendaView, setAgendaView] = useState<"week" | "month">(
-    () => (typeof window !== "undefined" && (localStorage.getItem("agenda:view") as "week" | "month")) || "week"
-  );
-  const [agendaTheme, setAgendaTheme] = useState<"light" | "dark">(
-    () => (typeof window !== "undefined" && (localStorage.getItem("agenda:theme") as "light" | "dark")) || "light"
-  );
 
   useEffect(() => {
     const load = async () => {
@@ -113,14 +105,6 @@ export default function DashboardPage() {
     load();
   }, []);
 
-  // Persistência simples dos controles
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("agenda:view", agendaView);
-      localStorage.setItem("agenda:theme", agendaTheme);
-    }
-  }, [agendaView, agendaTheme]);
-
   return (
     <div className="space-y-4">
       {/* Saudação */}
@@ -146,41 +130,8 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Controles da Agenda */}
-      <div className="flex items-center justify-between">
-        <div className="font-semibold text-textmain">Agenda</div>
-        <div className="flex items-center gap-2">
-          {/* View: Semana / Mês */}
-          <div className="rounded-xl bg-bgsec p-1">
-            <button
-              className={`px-3 py-1 rounded-lg text-sm ${agendaView === "week" ? "bg-white shadow-soft" : ""}`}
-              onClick={() => setAgendaView("week")}
-              aria-pressed={agendaView === "week"}
-            >
-              Semana
-            </button>
-            <button
-              className={`px-3 py-1 rounded-lg text-sm ${agendaView === "month" ? "bg-white shadow-soft" : ""}`}
-              onClick={() => setAgendaView("month")}
-              aria-pressed={agendaView === "month"}
-            >
-              Mês
-            </button>
-          </div>
-
-          {/* Tema: claro/escuro (aplica só ao calendário) */}
-          <button
-            className="badge"
-            onClick={() => setAgendaTheme((t) => (t === "light" ? "dark" : "light"))}
-            title={agendaTheme === "light" ? "Mudar para tema escuro" : "Mudar para tema claro"}
-          >
-            {agendaTheme === "light" ? <><Moon className="w-4 h-4 mr-1" /> Escuro</> : <><Sun className="w-4 h-4 mr-1" /> Claro</>}
-          </button>
-        </div>
-      </div>
-
-      {/* Agenda da semana/mês (tema e view) */}
-      <WeekAgenda view={agendaView} theme={agendaTheme} mobileScroll />
+      {/* Agenda da semana */}
+      <WeekAgenda />
     </div>
   );
 }
