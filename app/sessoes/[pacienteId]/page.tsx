@@ -51,6 +51,10 @@ export default function SessoesPacientePage() {
     status: "concluido",
   });
 
+  // controles de salvamento/erro
+  const [saving, setSaving] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
   // --- exercícios (catálogo global + da empresa)
   const [empresaId, setEmpresaId] = useState<string | null>(null);
   const [catalogo, setCatalogo] = useState<Exercicio[]>([]);
@@ -95,13 +99,13 @@ export default function SessoesPacientePage() {
         window.location.href = "/login";
         return;
       }
-      const { data: u, error } = await supabase
+      const { data: u } = await supabase
         .from("usuarios")
         .select("empresa_id")
         .eq("id", auth.user.id)
         .maybeSingle();
 
-      if (!error) setEmpresaId(u?.empresa_id ?? null);
+      setEmpresaId(u?.empresa_id ?? null);
 
       // catálogo visível (RLS já filtra: global + da empresa)
       const { data: cat } = await supabase
@@ -131,41 +135,56 @@ export default function SessoesPacientePage() {
 
   // ---------- criar sessão + vincular exercícios ----------
   const add = async () => {
-    // cria a sessão
-    const insertPayload = {
-      paciente_id: String(pacienteId),
-      data: new Date(form.data).toISOString(),
-      tipo: form.tipo,
-      numero_sessao: form.numero_sessao ?? null,
-      dor: Number(form.dor) || 0,
-      evolucao: form.evolucao || null,
-      status: form.status,
-    };
+    if (saving) return;
+    setErro(null);
+    setSaving(true);
 
-    const { data, error } = await supabase
-      .from("sessoes")
-      .insert(insertPayload)
-      .select("id")
-      .single();
+    try {
+      const insertPayload: any = {
+        paciente_id: String(pacienteId),
+        data: new Date(form.data).toISOString(),
+        // converter para minúsculo para evitar erro de ENUM/validação no DB
+        tipo: String(form.tipo || "Sessao").toLowerCase(), // "avaliacao" | "reavaliacao" | "sessao"
+        numero_sessao: form.numero_sessao ?? null,
+        dor: Number(form.dor) || 0,
+        evolucao: form.evolucao?.trim() || null,
+        status: form.status || "concluido",
+      };
 
-    if (error || !data?.id) return;
+      const { data: inserted, error } = await supabase
+        .from("sessoes")
+        .insert(insertPayload)
+        .select("id")
+        .single();
 
-    // vincula os exercícios selecionados
-    if (selecionados.size > 0) {
-      const payload = Array.from(selecionados).map((exId) => ({
-        sessao_id: data.id,
-        exercicio_id: exId,
-      }));
-      // exige UNIQUE (sessao_id, exercicio_id) na tabela sessoes_exercicios
-      await supabase
-        .from("sessoes_exercicios")
-        .upsert(payload, { onConflict: "sessao_id,exercicio_id" });
+      if (error) throw error;
+      const sessaoId = inserted?.id;
+
+      // vincula os exercícios selecionados
+      if (sessaoId && selecionados.size > 0) {
+        const payload = Array.from(selecionados).map((exId, idx) => ({
+          sessao_id: sessaoId,
+          exercicio_id: exId,
+          ordem: idx + 1,
+        }));
+
+        const { error: e2 } = await supabase
+          .from("sessoes_exercicios")
+          .upsert(payload, { onConflict: "sessao_id,exercicio_id" });
+
+        if (e2) throw e2;
+      }
+
+      // limpa e recarrega
+      setSelecionados(new Set());
+      setForm((f) => ({ ...f, evolucao: "" }));
+      setPickerOpen(false);
+      await loadSessoes();
+    } catch (e: any) {
+      setErro(e?.message || "Não foi possível registrar a sessão.");
+    } finally {
+      setSaving(false);
     }
-
-    // limpa e recarrega
-    setSelecionados(new Set());
-    setForm((f) => ({ ...f, evolucao: "" }));
-    loadSessoes();
   };
 
   // ---------- abrir lista de exercícios de uma sessão (expandir) ----------
@@ -174,7 +193,6 @@ export default function SessoesPacientePage() {
       setAberta(null);
       return;
     }
-    // carrega ids
     const { data } = await supabase
       .from("sessoes_exercicios")
       .select("exercicio_id")
@@ -285,10 +303,12 @@ export default function SessoesPacientePage() {
             Adicionar exercícios
             {selecionados.size > 0 ? ` (${selecionados.size})` : ""}
           </button>
-          <button className="btn btn-primary" onClick={add}>
-            Registrar sessão
+          <button className="btn btn-primary" onClick={add} disabled={saving}>
+            {saving ? "Salvando..." : "Registrar sessão"}
           </button>
         </div>
+
+        {erro && <div className="small text-red-600 md:col-span-4">{erro}</div>}
       </div>
 
       {/* gráfico da dor */}
