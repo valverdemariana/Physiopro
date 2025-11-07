@@ -14,6 +14,9 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
+// ⬇️ ADD: abas do paciente
+import PatientTabs from "@/components/PatientTabs";
+
 /** Tipos */
 type Sessao = {
   id: string;
@@ -57,6 +60,7 @@ function labelTipo(t: string) {
 
 export default function SessoesPacientePage() {
   const { pacienteId } = useParams<{ pacienteId: string }>();
+  const pid = String(pacienteId); // ⬅️ ADD: usado nas abas
 
   // --- estado principal
   const [lista, setLista] = useState<Sessao[]>([]);
@@ -149,7 +153,7 @@ export default function SessoesPacientePage() {
 
   useEffect(() => {
     loadSessoes();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pacienteId]);
 
   // ---------- criar sessão + vincular exercícios ----------
@@ -244,6 +248,9 @@ export default function SessoesPacientePage() {
   return (
     <div>
       <h1 className="title">Sessões</h1>
+
+      {/* ⬇️ ADD: abas iguais às do paciente */}
+      <PatientTabs pacienteId={pid} active="sessoes" />
 
       {/* formulário */}
       <div className="card mb-3 grid md:grid-cols-4 gap-3">
