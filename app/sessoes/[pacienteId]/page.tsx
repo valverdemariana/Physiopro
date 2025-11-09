@@ -14,16 +14,12 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-// ⬇️ ADD: abas do paciente
-import PatientTabs from "@/components/PatientTabs";
-
 /** Tipos */
 type Sessao = {
   id: string;
   paciente_id: string;
   data: string;
-  // o BD pode retornar minúsculo; mantemos como string para ser flexível
-  tipo: string;
+  tipo: "Avaliacao" | "Reavaliacao" | "Sessao";
   numero_sessao?: number | null;
   dor?: number | null;
   evolucao?: string | null;
@@ -38,44 +34,22 @@ type Exercicio = {
   empresa_id: string | null;
 };
 
-const TIPOS = ["Avaliacao", "Reavaliacao", "Sessao"] as const;
+const TIPOS: Array<Sessao["tipo"]> = ["Avaliacao", "Reavaliacao", "Sessao"];
 const NROS = Array.from({ length: 10 }, (_, i) => i + 1);
-
-// mapeia o que a UI usa -> valor aceito no BD (ajuste aqui se seu enum tiver acento)
-const TIPO_DB: Record<(typeof TIPOS)[number], string> = {
-  Avaliacao: "avaliacao",
-  Reavaliacao: "reavaliacao",
-  Sessao: "sessao",
-};
-
-// rótulo amigável independente do valor vir minúsculo/maiúsculo
-function labelTipo(t: string) {
-  const k = (t || "").toLowerCase();
-  if (k === "sessao" || k === "sessão") return "Sessão";
-  if (k === "avaliacao" || k === "avaliação") return "Avaliação";
-  if (k === "reavaliacao" || k === "reavaliação") return "Reavaliação";
-  // fallback: mostra como veio
-  return t || "Sessão";
-}
 
 export default function SessoesPacientePage() {
   const { pacienteId } = useParams<{ pacienteId: string }>();
-  const pid = String(pacienteId); // ⬅️ ADD: usado nas abas
 
   // --- estado principal
   const [lista, setLista] = useState<Sessao[]>([]);
   const [form, setForm] = useState({
     data: new Date().toISOString().slice(0, 16),
-    tipo: "Sessao" as (typeof TIPOS)[number],
+    tipo: "Sessao" as Sessao["tipo"],
     numero_sessao: undefined as number | undefined,
     dor: 0,
     evolucao: "",
     status: "concluido",
   });
-
-  // controles de salvamento/erro
-  const [saving, setSaving] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
 
   // --- exercícios (catálogo global + da empresa)
   const [empresaId, setEmpresaId] = useState<string | null>(null);
@@ -121,13 +95,13 @@ export default function SessoesPacientePage() {
         window.location.href = "/login";
         return;
       }
-      const { data: u } = await supabase
+      const { data: u, error } = await supabase
         .from("usuarios")
         .select("empresa_id")
         .eq("id", auth.user.id)
         .maybeSingle();
 
-      setEmpresaId(u?.empresa_id ?? null);
+      if (!error) setEmpresaId(u?.empresa_id ?? null);
 
       // catálogo visível (RLS já filtra: global + da empresa)
       const { data: cat } = await supabase
@@ -142,78 +116,56 @@ export default function SessoesPacientePage() {
 
   // ---------- carregar sessões do paciente ----------
   const loadSessoes = async () => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("sessoes")
       .select("*")
       .eq("paciente_id", pacienteId)
       .order("data", { ascending: true });
-
-    if (!error) setLista((data || []) as Sessao[]);
+    setLista((data || []) as Sessao[]);
   };
 
   useEffect(() => {
     loadSessoes();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pacienteId]);
 
   // ---------- criar sessão + vincular exercícios ----------
   const add = async () => {
-    if (saving) return;
-    setErro(null);
-    setSaving(true);
+    // cria a sessão
+    const insertPayload = {
+      paciente_id: String(pacienteId),
+      data: new Date(form.data).toISOString(),
+      tipo: form.tipo,
+      numero_sessao: form.numero_sessao ?? null,
+      dor: Number(form.dor) || 0,
+      evolucao: form.evolucao || null,
+      status: form.status,
+    };
 
-    try {
-      const insertPayload: any = {
-        paciente_id: String(pacienteId),
-        data: new Date(form.data).toISOString(),
-        // mapeado para o formato aceito no BD
-        tipo: TIPO_DB[form.tipo], // "avaliacao" | "reavaliacao" | "sessao"
-        numero_sessao: form.numero_sessao ?? null,
-        dor: Number.isFinite(form.dor) ? Number(form.dor) : 0,
-        evolucao: form.evolucao?.trim() || null,
-        // não enviamos "status" para evitar conflito de enum/check
-      };
+    const { data, error } = await supabase
+      .from("sessoes")
+      .insert(insertPayload)
+      .select("id")
+      .single();
 
-      const { data: inserted, error: e1 } = await supabase
-        .from("sessoes")
-        .insert(insertPayload)
-        .select("id")
-        .single();
+    if (error || !data?.id) return;
 
-      if (e1) throw e1;
-      const sessaoId = inserted?.id;
-
-      // vincula os exercícios selecionados
-      if (sessaoId && selecionados.size > 0) {
-        const payload = Array.from(selecionados).map((exId, idx) => ({
-          sessao_id: sessaoId,
-          exercicio_id: exId,
-          ordem: idx + 1,
-        }));
-
-        // INSERT simples; se já existir (unique), ignoramos o erro 23505
-        const { error: e2 } = await supabase
-          .from("sessoes_exercicios")
-          .insert(payload);
-
-        const isDuplicate =
-          (e2 && (e2 as any).code === "23505") ||
-          (e2 && /duplicate key value/i.test((e2 as any).message || ""));
-
-        if (e2 && !isDuplicate) throw e2;
-      }
-
-      // limpa e recarrega
-      setSelecionados(new Set());
-      setForm((f) => ({ ...f, evolucao: "" }));
-      setPickerOpen(false);
-      await loadSessoes();
-    } catch (e: any) {
-      setErro(e?.message || "Não foi possível registrar a sessão.");
-      console.error("Erro ao registrar sessão:", e);
-    } finally {
-      setSaving(false);
+    // vincula os exercícios selecionados
+    if (selecionados.size > 0) {
+      const payload = Array.from(selecionados).map((exId) => ({
+        sessao_id: data.id,
+        exercicio_id: exId,
+      }));
+      // exige UNIQUE (sessao_id, exercicio_id) na tabela sessoes_exercicios
+      await supabase
+        .from("sessoes_exercicios")
+        .upsert(payload, { onConflict: "sessao_id,exercicio_id" });
     }
+
+    // limpa e recarrega
+    setSelecionados(new Set());
+    setForm((f) => ({ ...f, evolucao: "" }));
+    loadSessoes();
   };
 
   // ---------- abrir lista de exercícios de uma sessão (expandir) ----------
@@ -222,6 +174,7 @@ export default function SessoesPacientePage() {
       setAberta(null);
       return;
     }
+    // carrega ids
     const { data } = await supabase
       .from("sessoes_exercicios")
       .select("exercicio_id")
@@ -248,9 +201,6 @@ export default function SessoesPacientePage() {
   return (
     <div>
       <h1 className="title">Sessões</h1>
-
-      {/* ⬇️ ADD: abas iguais às do paciente */}
-      <PatientTabs pacienteId={pid} active="sessoes" />
 
       {/* formulário */}
       <div className="card mb-3 grid md:grid-cols-4 gap-3">
@@ -326,28 +276,19 @@ export default function SessoesPacientePage() {
           />
         </div>
 
-        {/* Botões responsivos */}
-        <div className="md:col-span-1">
-          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-end gap-2 h-full">
-            <button
-              type="button"
-              className="btn btn-secondary w-full sm:w-auto"
-              onClick={() => setPickerOpen(true)}
-            >
-              Adicionar exercícios
-              {selecionados.size > 0 ? ` (${selecionados.size})` : ""}
-            </button>
-            <button
-              className="btn btn-primary w-full sm:w-auto"
-              onClick={add}
-              disabled={saving}
-            >
-              {saving ? "Salvando..." : "Registrar sessão"}
-            </button>
-          </div>
+        <div className="flex items-end md:justify-end gap-2 md:col-span-1">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setPickerOpen(true)}
+          >
+            Adicionar exercícios
+            {selecionados.size > 0 ? ` (${selecionados.size})` : ""}
+          </button>
+          <button className="btn btn-primary" onClick={add}>
+            Registrar sessão
+          </button>
         </div>
-
-        {erro && <div className="small text-red-600 md:col-span-4">{erro}</div>}
       </div>
 
       {/* gráfico da dor */}
@@ -373,12 +314,15 @@ export default function SessoesPacientePage() {
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-semibold">
-                  {formatBRDate(s.data)} · {labelTipo(s.tipo)}
+                  {formatBRDate(s.data)} ·{" "}
+                  {s.tipo === "Sessao"
+                    ? "Sessão"
+                    : s.tipo === "Avaliacao"
+                    ? "Avaliação"
+                    : "Reavaliação"}
                   {s.numero_sessao ? ` · nº ${s.numero_sessao}` : ""}
                 </div>
-                <div className="small">
-                  Dor {s.dor ?? 0} · {s.evolucao || "Sem notas"}
-                </div>
+                <div className="small">Dor {s.dor ?? 0} · {s.evolucao || "Sem notas"}</div>
               </div>
               <button
                 className="btn btn-secondary"
@@ -394,7 +338,7 @@ export default function SessoesPacientePage() {
                   const e = exMap.get(exId);
                   if (!e) return null;
                   return (
-                    <div key={e.id} className="small text-textsec">
+                    <div key={exId} className="small text-textsec">
                       • <span className="font-semibold text-textmain">{e.nome}</span>{" "}
                       — {e.categoria} · {e.nivel}
                       {e.empresa_id === null ? " · Catálogo" : ""}
@@ -460,15 +404,15 @@ export default function SessoesPacientePage() {
               )}
             </div>
 
-            <div className="flex flex-col-reverse sm:flex-row gap-2 mt-3 sm:justify-end">
+            <div className="flex gap-2 mt-3 justify-end">
               <button
-                className="btn btn-primary w-full sm:w-auto"
+                className="btn btn-primary"
                 onClick={() => setPickerOpen(false)}
               >
                 Concluir seleção
               </button>
               <button
-                className="btn btn-secondary w-full sm:w-auto"
+                className="btn btn-secondary"
                 onClick={() => setPickerOpen(false)}
               >
                 Cancelar

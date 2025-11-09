@@ -1,50 +1,30 @@
 "use client";
-
 import Link from "next/link";
 
-type TabsProps = {
+type Props = {
   pacienteId: string;
   active?: "dados" | "anamnese" | "sessoes";
 };
 
-const cx = (...xs: (string | false | undefined)[]) => xs.filter(Boolean).join(" ");
+export default function PatientTabs({ pacienteId, active = "dados" }: Props) {
+  const tab = (key: Props["active"], href: string, label: string) => (
+    <Link
+      href={href}
+      className={`pb-3 -mb-px ${
+        active === key
+          ? "border-b-2 border-uppli text-textmain font-medium"
+          : "text-textsec hover:text-textmain"
+      }`}
+    >
+      {label}
+    </Link>
+  );
 
-export default function PatientTabs({ pacienteId, active = "dados" }: TabsProps) {
   return (
     <div className="border-b mb-4 flex gap-6 text-sm">
-      <Link
-        href={`/pacientes/${pacienteId}`}
-        className={cx(
-          "pb-3 -mb-px",
-          active === "dados"
-            ? "border-b-2 border-uppli text-textmain font-medium"
-            : "text-textsec hover:text-textmain"
-        )}
-      >
-        Informações
-      </Link>
-      <Link
-        href={`/anamnese/${pacienteId}`}
-        className={cx(
-          "pb-3 -mb-px",
-          active === "anamnese"
-            ? "border-b-2 border-uppli text-textmain font-medium"
-            : "text-textsec hover:text-textmain"
-        )}
-      >
-        Anamnese
-      </Link>
-      <Link
-        href={`/sessoes/${pacienteId}`}
-        className={cx(
-          "pb-3 -mb-px",
-          active === "sessoes"
-            ? "border-b-2 border-uppli text-textmain font-medium"
-            : "text-textsec hover:text-textmain"
-        )}
-      >
-        Sessões
-      </Link>
+      {tab("dados", `/pacientes/${pacienteId}`, "Informações")}
+      {tab("anamnese", `/anamnese/${pacienteId}`, "Anamnese")}
+      {tab("sessoes", `/sessoes/${pacienteId}`, "Sessões")}
     </div>
   );
 }
