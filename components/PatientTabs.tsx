@@ -1,25 +1,48 @@
 "use client";
+
 import Link from "next/link";
 
-type Props = {
+type TabsProps = {
   pacienteId: string;
-  active: "info" | "anamnese" | "sessoes";
+  active?: "dados" | "anamnese" | "sessoes";
 };
 
-export default function PatientTabs({ pacienteId, active }: Props) {
-  const base = "pb-3 -mb-px text-sm";
-  const on = "border-b-2 border-uppli text-textmain font-medium";
-  const off = "text-textsec hover:text-textmain";
+const cx = (...xs: (string | false | undefined)[]) => xs.filter(Boolean).join(" ");
 
+export default function PatientTabs({ pacienteId, active = "dados" }: TabsProps) {
   return (
-    <div className="border-b mb-4 flex gap-6">
-      <Link href={`/pacientes/${pacienteId}`} className={`${base} ${active==="info" ? on : off}`}>
+    <div className="border-b mb-4 flex gap-6 text-sm">
+      <Link
+        href={`/pacientes/${pacienteId}`}
+        className={cx(
+          "pb-3 -mb-px",
+          active === "dados"
+            ? "border-b-2 border-uppli text-textmain font-medium"
+            : "text-textsec hover:text-textmain"
+        )}
+      >
         Informações
       </Link>
-      <Link href={`/anamnese/${pacienteId}`} className={`${base} ${active==="anamnese" ? on : off}`}>
+      <Link
+        href={`/anamnese/${pacienteId}`}
+        className={cx(
+          "pb-3 -mb-px",
+          active === "anamnese"
+            ? "border-b-2 border-uppli text-textmain font-medium"
+            : "text-textsec hover:text-textmain"
+        )}
+      >
         Anamnese
       </Link>
-      <Link href={`/sessoes/${pacienteId}`} className={`${base} ${active==="sessoes" ? on : off}`}>
+      <Link
+        href={`/sessoes/${pacienteId}`}
+        className={cx(
+          "pb-3 -mb-px",
+          active === "sessoes"
+            ? "border-b-2 border-uppli text-textmain font-medium"
+            : "text-textsec hover:text-textmain"
+        )}
+      >
         Sessões
       </Link>
     </div>

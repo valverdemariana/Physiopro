@@ -1,18 +1,51 @@
-export default function PatientHeader({ p }: { p: any }) {
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
+
+function initials(name: string) {
+  const p = (name || "").trim().split(/\s+/);
+  if (!p.length) return "P";
+  const a = p[0]?.[0] ?? "";
+  const b = p.length > 1 ? p[p.length - 1][0] : "";
+  return (a + b).toUpperCase();
+}
+
+type PatientHeaderProps = { pacienteId: string };
+
+export default function PatientHeader({ pacienteId }: PatientHeaderProps) {
+  const [nome, setNome] = useState("");
+  const [codigo, setCodigo] = useState<number | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("pacientes")
+        .select("nome,codigo")
+        .eq("id", pacienteId)
+        .maybeSingle();
+
+      if (data) {
+        setNome(data.nome ?? "");
+        setCodigo(
+          Object.prototype.hasOwnProperty.call(data, "codigo")
+            ? (data as any).codigo ?? null
+            : null
+        );
+      }
+    })();
+  }, [pacienteId]);
+
   return (
-    <div className="card mb-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-12 w-12 rounded-full bg-bgsec flex items-center justify-center font-bold text-uppli">
-            {p.nome?.[0]?.toUpperCase() || "P"}
-          </div>
-          <div>
-            <div className="text-xl font-semibold">{p.nome}</div>
-            <div className="small text-textsec">CPF {p.cpf}{p.diagnostico ? ` · ${p.diagnostico}` : ""}</div>
-            {(p.telefone || p.email) && <div className="small text-textsec">{p.telefone || ""}{p.telefone && p.email ? " · " : ""}{p.email || ""}</div>}
-          </div>
+    <div className="flex items-center gap-3 mb-3">
+      <div className="w-10 h-10 rounded-full bg-uppli/10 text-uppli flex items-center justify-center font-semibold">
+        {initials(nome || "Paciente")}
+      </div>
+      <div>
+        <h1 className="title m-0">{nome || "Paciente"}</h1>
+        <div className="small text-textsec">
+          {codigo ? `Nº ${codigo}` : `ID: ${pacienteId.slice(0, 6)}…${pacienteId.slice(-4)}`}
         </div>
-        <span className="badge">{p.ativo ? "Ativo" : "Inativo"}</span>
       </div>
     </div>
   );
