@@ -1,5 +1,10 @@
 "use client";
 
+// garante SSR e evita 404 em rota dinâmica
+export const dynamic = "force-dynamic";
+export const revalidate = 0;         // opcional, mas útil
+export const fetchCache = "force-no-store"; // opcional
+
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
