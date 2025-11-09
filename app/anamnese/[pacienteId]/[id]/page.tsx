@@ -3,21 +3,10 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import PatientHeader from "@/components/PatientHeader";
 import PatientTabs from "@/components/PatientTabs";
 
-/* utils simples */
-function initials(fullName: string) {
-  const parts = (fullName || "").trim().split(/\s+/);
-  if (!parts.length) return "P";
-  const one = parts[0]?.[0] ?? "";
-  const two = parts.length > 1 ? parts[parts.length - 1][0] : "";
-  return (one + two).toUpperCase();
-}
-const isMissingColumn = (e: unknown) =>
-  typeof (e as any)?.message === "string" &&
-  /column .* does not exist/i.test((e as any).message);
-
-/* tipos */
+/** Tipos */
 type Anamnese = {
   paciente_id: string;
   queixa_principal?: string | null;
@@ -29,15 +18,10 @@ type Anamnese = {
 };
 
 export default function AnamnesePage() {
-  // suporta ambas estruturas de rota: /anamnese/[id] e /anamnese/[pacienteId]/[id]
+  // Suporta /anamnese/[id] ou /anamnese/[pacienteId]
   const params = useParams() as any;
   const pacienteId: string = String(params.id ?? params.pacienteId);
 
-  /* header */
-  const [pacNome, setPacNome] = useState<string>("");
-  const [pacCodigo, setPacCodigo] = useState<number | null>(null);
-
-  /* form */
   const [form, setForm] = useState<Anamnese>({
     paciente_id: pacienteId,
     queixa_principal: "",
@@ -47,6 +31,7 @@ export default function AnamnesePage() {
     uso_medicacoes: "",
     objetivos_tratamento: "",
   });
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -63,38 +48,12 @@ export default function AnamnesePage() {
         return;
       }
 
-      // HEADER: tenta pegar nome + codigo; se "codigo" não existir no schema, faz fallback
-      let { data: pData, error: pErr } = await supabase
-        .from("pacientes")
-        .select("nome,codigo")
-        .eq("id", pacienteId)
-        .maybeSingle<any>();
-
-      if (isMissingColumn(pErr)) {
-        const res2 = await supabase
-          .from("pacientes")
-          .select("nome")
-          .eq("id", pacienteId)
-          .maybeSingle<any>();
-        pData = res2.data ?? null;
-        pErr = res2.error ?? null;
-      }
-
-      if (!pErr && pData) {
-        setPacNome(pData.nome || "");
-        setPacCodigo(
-          Object.prototype.hasOwnProperty.call(pData, "codigo")
-            ? (pData as any).codigo ?? null
-            : null
-        );
-      }
-
-      // ANAMNESE: carrega (se existir) por paciente_id
+      // carrega anamnese (se existir) por paciente_id
       const { data, error } = await supabase
         .from("anamneses")
         .select("*")
         .eq("paciente_id", pacienteId)
-        .maybeSingle<any>();
+        .maybeSingle<Anamnese>();
 
       if (!error && data) {
         setForm({
@@ -116,7 +75,7 @@ export default function AnamnesePage() {
     setSaving(true);
     setMsg(null);
 
-    const payload = {
+    const payload: Anamnese = {
       paciente_id: pacienteId,
       queixa_principal: form.queixa_principal || null,
       historico_clinico: form.historico_clinico || null,
@@ -128,7 +87,7 @@ export default function AnamnesePage() {
 
     const { error } = await supabase
       .from("anamneses")
-      .upsert(payload, { onConflict: "paciente_id" }); // exige UNIQUE(paciente_id) na tabela
+      .upsert(payload, { onConflict: "paciente_id" }); // requer UNIQUE(paciente_id)
 
     setSaving(false);
     setMsg(error ? error.message : "Anamnese salva com sucesso!");
@@ -138,24 +97,8 @@ export default function AnamnesePage() {
     <div className="max-w-3xl mx-auto">
       <h1 className="title">Anamnese</h1>
 
-      {/* header do paciente */}
-      <div className="flex items-center gap-3 mb-3">
-        <div className="w-10 h-10 rounded-full bg-uppli/10 text-uppli flex items-center justify-center font-semibold">
-          {initials(pacNome || "P")}
-        </div>
-        <div>
-          <div className="text-xl font-semibold">{pacNome || "Paciente"}</div>
-          {pacCodigo ? (
-            <div className="small text-textsec">Nº {pacCodigo}</div>
-          ) : (
-            <div className="small text-textsec">
-              ID: {pacienteId.slice(0, 6)}…{pacienteId.slice(-4)}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* abas (usa o mesmo componente das outras páginas) */}
+      {/* Cabeçalho + Abas iguais às outras páginas */}
+      <PatientHeader pacienteId={pacienteId} />
       <PatientTabs pacienteId={pacienteId} active="anamnese" />
 
       <div className="card space-y-4 mt-3">
